@@ -12,6 +12,7 @@ New workflow:
 """
 from __future__ import annotations
 
+import base64
 import json
 import re
 from typing import Any
@@ -109,17 +110,25 @@ class TechLeadAgent:
         # even if this review takes a long time or fails partway through
         self._state.upsert_task(ticket_id, {"status": "UNDER_REVIEW", "last_reviewed_sha": current_sha})
 
-        pr_diff = self._github.get_pr_diff(pr_number)
-
         try:
             pr_obj = self._github.repo.get_pull(pr_number)
             pr_title = pr_obj.title
         except Exception:
             pr_title = f"PR #{pr_number}"
 
+        # Fetch complete file contents from the branch — no truncation, no diff ambiguity.
+        # The Tech Lead reviews actual code, not a partial diff window.
+        submitted_keys = list(task.get("submitted_files", {}).keys())
+        if submitted_keys:
+            branch_files = self._fetch_branch_files(branch_name, submitted_keys)
+        else:
+            # Fallback to diff if no submitted_files recorded (shouldn't happen in normal flow)
+            log.warning("No submitted_files for %s — falling back to diff", ticket_id)
+            branch_files = self._github.get_pr_diff_smart(pr_number)
+
         prior_issues: list[str] = task.get("all_review_feedback", [])
         prior_feedback_text = (
-            "\n".join(f"- {i}" for i in prior_issues[-30:])  # last 30 to stay within token budget
+            "\n".join(f"- {i}" for i in prior_issues[-30:])
             if prior_issues else "(none — this is the first review)"
         )
 
@@ -129,7 +138,7 @@ class TechLeadAgent:
             pr_number=str(pr_number),
             pr_title=pr_title,
             branch_name=branch_name,
-            pr_diff=pr_diff[:16000],
+            pr_diff=branch_files,
             ba_analysis=json.dumps(ba_analysis, indent=2),
             prior_feedback=prior_feedback_text,
         )
@@ -157,6 +166,25 @@ class TechLeadAgent:
             self._approve(ticket_id, pr_number, review)
         else:
             self._request_changes(ticket_id, pr_number, review)
+
+    def _fetch_branch_files(self, branch_name: str, paths: list[str]) -> str:
+        """Fetch complete file contents from the branch. No truncation."""
+        parts: list[str] = []
+        seen: set[str] = set()
+        for path in paths:
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            try:
+                contents = self._github.repo.get_contents(path, ref=branch_name)
+                text = base64.b64decode(contents.content).decode("utf-8", errors="replace")  # type: ignore[union-attr]
+                parts.append(f"### {path}\n```\n{text}\n```")
+            except Exception as exc:
+                log.debug("Could not fetch %s from %s: %s", path, branch_name, exc)
+                parts.append(f"### {path}\n(could not fetch — file may have been removed)")
+        result = "\n\n".join(parts)
+        log.info("Fetched %d file(s) from branch %s (%d chars total)", len(seen), branch_name, len(result))
+        return result
 
     def _filter_spec_contradictions(self, review: dict[str, Any], ba_analysis: dict, prior_issues: list[str]) -> dict[str, Any]:
         """Remove issues that contradict the BA spec or have been raised too many times."""

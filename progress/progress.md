@@ -446,7 +446,54 @@ agent-spike/
 
 - **Model cost:** `gpt-4o` is expensive for an always-on polling system. Switch to `gemini-2.5-flash` once stability is confirmed.
 - **Poll interval:** Currently 30 seconds. Could be event-driven (Jira webhook → queue) for lower latency and cost.
-- **PR diff truncation:** Large PRs (>16000 chars of diff) still get truncated. Could summarise per-file instead of raw diff.
 - **No CI enforcement:** Tech Lead is instructed to ignore CI. In a real project, you'd want the agent to wait for CI to pass before reviewing.
 - **Human merge step:** By design, agents never merge. A human must click Merge on approved PRs.
 - **Stuck state recovery:** If an agent crashes mid-cycle, the ticket stays in `IN_DEVELOPMENT` or `UNDER_REVIEW`. Currently requires manual reset. Could add a watchdog that auto-resets tickets stuck in a non-terminal state for >10 minutes.
+
+---
+
+## Phase 5 — Eliminating Phantom Review Comments
+
+### Problem — Tech Lead Flagging Code That Was Already Implemented
+
+**Symptom:** Tech Lead kept raising the same 2 issues every round (e.g. "FormController missing multi-step logic", "AuthControllerTest missing edge case tests") even after Dev had implemented them. The loop never converged.
+
+**Root cause:** The Tech Lead was reviewing a truncated diff (first 16000 chars of raw unified diff). For large PRs, the files it was flagging existed and were correct — they just fell outside the diff window. The Tech Lead had no visibility into them and assumed they were missing.
+
+**What we tried first:**
+- Smart diff summariser (`get_pr_diff_smart`) — parsed diff into per-file sections, sorted by lines changed, budgeted 3000 chars per file. Better than raw truncation but still didn't solve the problem — a file could be summarised as "42 additions" with no actual content and the Tech Lead would still flag it.
+
+**Final fix — send full file contents instead of the diff:**
+
+The Tech Lead now fetches complete file contents from the branch for every file in `submitted_files`, and sends them all to the AI with no truncation. The AI client's continuation loop handles responses that exceed the token limit.
+
+```python
+# Before — truncated diff
+pr_diff = self._github.get_pr_diff(pr_number)
+# passed as pr_diff[:16000] to the prompt
+
+# After — complete file contents from branch
+submitted_keys = list(task.get("submitted_files", {}).keys())
+branch_files = self._fetch_branch_files(branch_name, submitted_keys)
+# passed in full to the prompt — no size limit
+```
+
+The prompt was also updated to make this explicit:
+> "You have the COMPLETE file contents — do not assume anything is missing just because you don't see it in a diff."
+
+**Files changed:**
+- `agents/tech_lead_agent.py` — added `_fetch_branch_files()`, switched from `get_pr_diff_smart` to full file fetch
+- `prompts/tech_lead_review.txt` — label changed from "DIFF" to "COMPLETE FILE CONTENTS ON THE BRANCH"
+- `github_client.py` — `get_pr_diff_smart()` kept as fallback but no longer used in main flow
+
+### Problem — Exposed API Key in git history
+
+**Symptom:** `git push` to GitHub was rejected with `GH013: Repository rule violations found — Push cannot contain secrets`. The OpenRouter API key was embedded in `docs/test-tasks.md` line 57.
+
+**Fix:**
+1. Redacted the key in the file (replaced with `<YOUR_OPENROUTER_API_KEY>`)
+2. Amended the single commit in history (`git commit --amend`)
+3. Force-pushed to replace the commit on GitHub (`git push --force origin main`)
+4. Rotated the API key — any key that was ever in a public repo should be considered compromised
+
+**Lesson:** Never paste real API keys into docs, even in curl examples. Use placeholders from day one.

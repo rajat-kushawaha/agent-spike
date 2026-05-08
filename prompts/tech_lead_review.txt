@@ -5,14 +5,14 @@ PR #: {pr_number}
 Title: {pr_title}
 Branch: {branch_name}
 
-DIFF:
+COMPLETE FILE CONTENTS ON THE BRANCH (full code — not a diff, no truncation):
 {pr_diff}
 
 TASK SPECIFICATION (what was required):
 {ba_analysis}
 
 INSTRUCTIONS:
-1. Verify every acceptance criterion from the BA analysis is satisfied by the diff.
+1. Verify every acceptance criterion from the BA analysis is satisfied by the code. You have the COMPLETE file contents — do not assume anything is missing just because you don't see it in a diff.
 2. Check for security issues: hardcoded secrets, injection risks, unvalidated environment variables used as credentials.
 3. Check for correctness: unhandled exceptions, missing edge cases, incomplete implementations.
 4. Check that tests exist and cover the key behaviours for every new or modified function/class.

@@ -195,6 +195,86 @@ class GitHubClient:
             log.error("Failed to fetch PR diff for #%d: %s", pr_number, exc)
             return ""
 
+    def get_pr_diff_smart(self, pr_number: int, char_limit: int = 16000) -> str:
+        """
+        Return the PR diff, intelligently summarised if it exceeds char_limit.
+
+        Strategy:
+        - Parse the raw diff into per-file sections
+        - If total fits within char_limit, return raw diff as-is
+        - Otherwise build a structured summary:
+            * Files with small diffs get their full diff included
+            * Files with large diffs get a header + stats + truncated content
+          Priority order: files with most changed lines first (most impactful to review)
+        """
+        raw = self.get_pr_diff(pr_number)
+        if not raw or len(raw) <= char_limit:
+            return raw
+
+        # Parse into per-file sections
+        file_sections: list[dict] = []
+        current: dict | None = None
+        for line in raw.splitlines(keepends=True):
+            if line.startswith("diff --git "):
+                if current:
+                    file_sections.append(current)
+                current = {"header": line, "lines": [], "path": ""}
+            elif current is not None:
+                if line.startswith("+++ b/") and not current["path"]:
+                    current["path"] = line[6:].rstrip()
+                current["lines"].append(line)
+        if current:
+            file_sections.append(current)
+
+        if not file_sections:
+            return raw[:char_limit] + "\n... [diff truncated]"
+
+        # Compute stats per file
+        for sec in file_sections:
+            added = sum(1 for l in sec["lines"] if l.startswith("+") and not l.startswith("+++"))
+            removed = sum(1 for l in sec["lines"] if l.startswith("-") and not l.startswith("---"))
+            sec["added"] = added
+            sec["removed"] = removed
+            sec["content"] = sec["header"] + "".join(sec["lines"])
+            sec["size"] = len(sec["content"])
+
+        # Sort largest-change files first so reviewer sees the most important files
+        file_sections.sort(key=lambda s: s["added"] + s["removed"], reverse=True)
+
+        # Budget: try to fit as many full file diffs as possible
+        _PER_FILE_BUDGET = 3000  # max chars per file before truncating
+        parts: list[str] = []
+        used = 0
+
+        for sec in file_sections:
+            remaining = char_limit - used - 200  # 200-char buffer for overhead
+            if remaining <= 0:
+                parts.append(f"diff --git a/{sec['path']} b/{sec['path']}\n"
+                              f"# [{sec['added']} additions, {sec['removed']} deletions — omitted, budget exhausted]\n")
+                continue
+
+            if sec["size"] <= min(remaining, _PER_FILE_BUDGET):
+                parts.append(sec["content"])
+                used += sec["size"]
+            else:
+                # Include truncated diff with stats header
+                allowed = min(remaining, _PER_FILE_BUDGET)
+                truncated = sec["content"][:allowed]
+                parts.append(
+                    f"diff --git a/{sec['path']} b/{sec['path']}\n"
+                    f"# [{sec['added']} additions, {sec['removed']} deletions — showing first {allowed} chars]\n"
+                    + truncated
+                    + f"\n# ... [{sec['path']} diff truncated]\n"
+                )
+                used += allowed + 100
+
+        result = "\n".join(parts)
+        log.info(
+            "PR #%d diff: raw=%d chars → smart=%d chars across %d file(s)",
+            pr_number, len(raw), len(result), len(file_sections),
+        )
+        return result
+
     def merge_pull_request(self, pr_number: int, commit_title: str) -> bool:
         """Squash-merge a PR. Returns True on success."""
         if self._dry_run:
