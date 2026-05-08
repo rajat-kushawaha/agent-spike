@@ -1,0 +1,50 @@
+You have been given a structured implementation specification. Produce complete, working Python code.
+
+TASK SPECIFICATION:
+{ba_analysis}
+
+EXISTING FILE CONTENTS (for context — include unchanged functions in your output):
+{existing_files}
+
+INSTRUCTIONS:
+1. Implement every acceptance criterion in the specification.
+2. Write tests for every function you add or modify (in the tests/ directory).
+3. Do not break any existing functionality — include all existing functions in files you modify.
+4. Use type hints on all function signatures.
+5. Write no comments unless the WHY is non-obvious (a workaround, a subtle invariant).
+6. If a specification point is ambiguous, implement the simplest correct interpretation.
+7. Return complete file contents — never partial files.
+
+OUTPUT FORMAT:
+Respond with a single JSON object only.
+
+```json
+{{
+  "ticket_id": "{ticket_id}",
+  "branch_name": "feature/{ticket_id_lower}-short-description",
+  "commit_message": "feat({ticket_id}): short description of change",
+  "pr_title": "feat: descriptive PR title",
+  "pr_body": "## What\nDescription.\n\n## Why\nReason.\n\n## Acceptance Criteria\n- [ ] criterion 1",
+  "files": {{
+    "calculator.py": "# complete file content\n...",
+    "tests/test_calculator.py": "# complete file content\n..."
+  }},
+  "implementation_notes": "Any decisions or trade-offs made"
+}}
+```
+
+EXAMPLE (adding divide() to calculator.py):
+```json
+{{
+  "ticket_id": "DEV-42",
+  "branch_name": "feature/dev-42-add-divide",
+  "commit_message": "feat(DEV-42): add divide function with zero-division guard",
+  "pr_title": "feat: add divide() to calculator module",
+  "pr_body": "## What\nAdds divide(a, b) to calculator.py.\n\n## Why\nRequired by DEV-42.\n\n## Acceptance Criteria\n- [x] divide(10, 2) returns 5.0\n- [x] divide(1, 0) raises ValueError",
+  "files": {{
+    "calculator.py": "def add(a: float, b: float) -> float:\n    return a + b\n\ndef divide(a: float, b: float) -> float:\n    if b == 0:\n        raise ValueError('Cannot divide by zero')\n    return a / b\n",
+    "tests/test_calculator.py": "from calculator import add, divide\nimport pytest\n\ndef test_add():\n    assert add(1, 2) == 3\n\ndef test_divide():\n    assert divide(10, 2) == 5.0\n\ndef test_divide_by_zero():\n    with pytest.raises(ValueError, match='Cannot divide by zero'):\n        divide(1, 0)\n"
+  }},
+  "implementation_notes": "Used float arithmetic throughout for consistency with existing add() signature"
+}}
+```

@@ -1,0 +1,72 @@
+Analyse the following Jira ticket and produce a structured, developer-ready implementation specification.
+
+JIRA TICKET:
+ID: {ticket_id}
+Summary: {ticket_summary}
+Labels: {ticket_labels}
+
+Description:
+{ticket_description}
+
+Existing Comments:
+{ticket_comments}
+
+INSTRUCTIONS:
+1. Identify the core functional requirement from all available fields — summary, description, comments, and labels.
+2. Break the requirement into discrete, testable acceptance criteria (Given/When/Then format). Each criterion must be independently verifiable.
+3. List every file that needs to change with the exact repository path and a reason.
+4. Specify exact function signatures with type hints.
+5. Identify edge cases the developer must handle explicitly.
+6. If ANY information is ambiguous or missing, set "needs_clarification" to true and list your questions.
+7. Estimate complexity: "low" (< 2h), "medium" (2–8h), "high" (> 8h).
+
+OUTPUT FORMAT:
+Respond with a single JSON object only. No text outside the JSON.
+
+```json
+{{
+  "ticket_id": "{ticket_id}",
+  "needs_clarification": false,
+  "clarification_questions": [],
+  "summary": "One-sentence description of what needs to be built",
+  "acceptance_criteria": [
+    "Given X, when Y, then Z",
+    "Given A, when B, then C"
+  ],
+  "files_to_change": [
+    {{"path": "calculator.py", "reason": "Add divide() function"}},
+    {{"path": "tests/test_calculator.py", "reason": "Add tests for divide()"}}
+  ],
+  "function_signatures": [
+    "def divide(a: float, b: float) -> float"
+  ],
+  "edge_cases": [
+    "Division by zero must raise ValueError with message 'Cannot divide by zero'"
+  ],
+  "complexity": "low",
+  "implementation_notes": "Any additional context for the developer"
+}}
+```
+
+EXAMPLE (ticket asking to add a divide function):
+```json
+{{
+  "ticket_id": "DEV-42",
+  "needs_clarification": false,
+  "clarification_questions": [],
+  "summary": "Add a divide() function to calculator.py that handles division by zero",
+  "acceptance_criteria": [
+    "Given two numbers a and b where b != 0, divide(a, b) returns a / b as a float",
+    "Given b == 0, divide(a, b) raises ValueError with message 'Cannot divide by zero'",
+    "Tests exist in tests/test_calculator.py covering both cases"
+  ],
+  "files_to_change": [
+    {{"path": "calculator.py", "reason": "Add divide() function"}},
+    {{"path": "tests/test_calculator.py", "reason": "Add unit tests for divide()"}}
+  ],
+  "function_signatures": ["def divide(a: float, b: float) -> float"],
+  "edge_cases": ["Division by zero must raise ValueError", "Both integers and floats must work"],
+  "complexity": "low",
+  "implementation_notes": "Follow the existing style in calculator.py (module-level functions, no classes)"
+}}
+```

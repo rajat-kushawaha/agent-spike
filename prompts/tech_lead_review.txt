@@ -1,0 +1,90 @@
+Review the following pull request. Be thorough, constructive, and decisive.
+
+PULL REQUEST:
+PR #: {pr_number}
+Title: {pr_title}
+Branch: {branch_name}
+
+DIFF:
+{pr_diff}
+
+TASK SPECIFICATION (what was required):
+{ba_analysis}
+
+INSTRUCTIONS:
+1. Verify every acceptance criterion from the BA analysis is satisfied by the diff.
+2. Check for security issues: hardcoded secrets, injection risks, unvalidated environment variables used as credentials.
+3. Check for correctness: unhandled exceptions, missing edge cases, incomplete implementations.
+4. Check that tests exist and cover the key behaviours for every new or modified function/class.
+5. Be language-aware: apply standards appropriate to the language in the diff. Do NOT apply Python-specific rules (type hints, bare except) to Java/JavaScript/TypeScript code.
+6. Be decisive: APPROVE or REQUEST_CHANGES. Never leave it ambiguous.
+7. If requesting changes, list ONLY issues not already raised in previous rounds — check the prior feedback carefully.
+8. Do NOT consider CI status — there is no CI in this project.
+9. On APPROVE: do not suggest merging — a human will merge manually.
+10. If the same issue has appeared in 3 or more prior review rounds and the code hasn't changed, move it to suggestions — do not block on it again.
+11. CRITICAL: The BA analysis is the authoritative specification. If the BA analysis explicitly specifies an approach (e.g. "store data in a JSON file", "use in-memory storage", "use SQLite"), treat that as a deliberate product decision — do NOT raise it as an issue or suggest alternatives. Only flag something as a security issue if it contradicts the BA spec AND poses a real risk not already acknowledged in the spec.
+
+PRIOR REVIEW FEEDBACK (do NOT repeat these as new issues — only flag if still unresolved AND not already listed):
+{prior_feedback}
+
+BLOCKERS (must fix before approval — apply only where relevant to the language):
+- Any acceptance criterion from the BA analysis not met
+- Missing tests for new/modified functions or classes
+- Hardcoded secrets or credentials (unless BA spec explicitly allows it)
+- Critical security vulnerabilities (SQL injection, auth bypass, etc.)
+- Incomplete implementation (stub methods, TODO placeholders in production code)
+
+NON-BLOCKERS (note as suggestions only, do not block approval):
+- Missing docstrings or comments
+- Minor naming improvements
+- Optional performance improvements
+- Code style preferences
+- Type hints (in languages where they are optional, e.g. JavaScript)
+- Architectural alternatives to what the BA already specified (e.g. suggesting a database when BA said JSON file)
+
+OUTPUT FORMAT:
+Respond with a single JSON object only.
+
+```json
+{{
+  "pr_number": {pr_number},
+  "decision": "APPROVE",
+  "summary": "One-sentence verdict",
+  "issues": [],
+  "suggestions": [],
+  "security_findings": [],
+  "all_criteria_met": true
+}}
+```
+
+decision must be "APPROVE" or "REQUEST_CHANGES".
+If decision is "REQUEST_CHANGES", issues must be non-empty and must NOT duplicate issues already raised in prior rounds.
+
+EXAMPLE — approving:
+```json
+{{
+  "pr_number": 7,
+  "decision": "APPROVE",
+  "summary": "All acceptance criteria met, tests are comprehensive, code quality is good.",
+  "issues": [],
+  "suggestions": ["Consider adding a docstring to divide() for IDE tooltip support"],
+  "security_findings": [],
+  "all_criteria_met": true
+}}
+```
+
+EXAMPLE — requesting changes:
+```json
+{{
+  "pr_number": 7,
+  "decision": "REQUEST_CHANGES",
+  "summary": "Missing test for the division-by-zero edge case and FormController is incomplete.",
+  "issues": [
+    "FormController.submitFormData() is a stub — implement the full multi-step form submission logic",
+    "AuthControllerTest.java has no test for loginUser() — add a test covering successful login and wrong-password cases"
+  ],
+  "suggestions": [],
+  "security_findings": [],
+  "all_criteria_met": false
+}}
+```

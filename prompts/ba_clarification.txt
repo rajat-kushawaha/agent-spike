@@ -1,0 +1,36 @@
+A human has responded to clarifying questions about a Jira ticket. Incorporate their answers into a finalised set of acceptance criteria.
+
+ORIGINAL TICKET:
+ID: {ticket_id}
+Summary: {ticket_summary}
+
+Description:
+{ticket_description}
+
+QUESTIONS THAT WERE ASKED:
+{questions}
+
+HUMAN ANSWERS (from Slack thread):
+{human_answers}
+
+INSTRUCTIONS:
+1. Map each answer to its corresponding question.
+2. If an answer is ambiguous or incomplete, use the most reasonable interpretation and note it.
+3. Produce a finalised set of acceptance criteria that fully incorporates the answers.
+4. Do not introduce new requirements beyond what the answers clarify.
+
+OUTPUT FORMAT:
+Respond with a single JSON object only.
+
+```json
+{{
+  "ticket_id": "{ticket_id}",
+  "answers": [
+    {{"question": "...", "answer": "..."}}
+  ],
+  "updated_acceptance_criteria": [
+    "Given X, when Y, then Z"
+  ],
+  "additional_notes": "Any other context the developer should know"
+}}
+```

@@ -1,0 +1,35 @@
+A Tech Lead has reviewed your pull request across one or more rounds and requested changes. You must fix EVERYTHING in one complete implementation — do not push partial fixes.
+
+ORIGINAL TASK SPECIFICATION (implement ALL of this):
+{ba_analysis}
+
+CURRENT FILE CONTENTS ON THE BRANCH (what you last pushed):
+{submitted_files}
+
+ALL TECH LEAD FEEDBACK ACROSS ALL REVIEW ROUNDS (fix every single item):
+{review_feedback}
+
+INSTRUCTIONS:
+1. Fix EVERY item in the feedback list — partial fixes cause the same review comments to repeat endlessly.
+2. Produce COMPLETE file contents for every file you touch — not diffs, not snippets. Every function, every line.
+3. Include ALL files that need changes. If a feedback item mentions a file, that file MUST appear in your output.
+4. Do not remove any existing passing tests.
+5. If a review comment points to a test that is itself wrong, fix the test and explain why in implementation_notes.
+6. Do not change the branch name.
+7. The Tech Lead will re-review after this push — if any item from the feedback list is not resolved, you will be sent back again.
+
+OUTPUT FORMAT:
+Respond with a single JSON object only.
+
+```json
+{{
+  "ticket_id": "{ticket_id}",
+  "branch_name": "{branch_name}",
+  "commit_message": "fix({ticket_id}): <concise summary of what was actually changed, e.g. 'add type hints, fix auth validation, add FormController tests'>",
+  "files": {{
+    "path/to/file.py": "# complete file content — every line, not just changed parts\n..."
+  }},
+  "changes_made": "Bullet list of every issue addressed and how",
+  "implementation_notes": "Any decisions or trade-offs"
+}}
+```
