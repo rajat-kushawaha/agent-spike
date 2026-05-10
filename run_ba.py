@@ -49,7 +49,7 @@ def main() -> int:
     jira = JiraClient(config, dry_run=args.dry_run)
     slack = SlackClient(config, dry_run=args.dry_run)
     agent = BAAgent(config, state, ai, jira, slack)
-
+    state.recover_stuck_tasks()
     log.info("BA agent started (pid=%d, dry_run=%s, once=%s)", __import__("os").getpid(), args.dry_run, args.once)
 
     if args.once:

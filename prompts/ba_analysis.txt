@@ -11,14 +11,19 @@ Description:
 Existing Comments:
 {ticket_comments}
 
+AVAILABLE REPOSITORIES (key: repo — keywords that indicate changes belong here):
+{available_repos}
+
 INSTRUCTIONS:
 1. Identify the core functional requirement from all available fields — summary, description, comments, and labels.
 2. Break the requirement into discrete, testable acceptance criteria (Given/When/Then format). Each criterion must be independently verifiable.
-3. List every file that needs to change with the exact repository path and a reason.
-4. Specify exact function signatures with type hints.
-5. Identify edge cases the developer must handle explicitly.
-6. If ANY information is ambiguous or missing, set "needs_clarification" to true and list your questions.
-7. Estimate complexity: "low" (< 2h), "medium" (2–8h), "high" (> 8h).
+3. Determine which repos need changes by matching the ticket content against the repo keywords above. A full-stack ticket will target multiple repos (e.g. ["api", "ui"]).
+4. List every file that needs to change. For each file, set "repo" to the repo key it belongs to.
+5. Set "target_repos" to the list of repo keys that need changes (derived from step 3).
+6. Specify exact function signatures with type hints.
+7. Identify edge cases the developer must handle explicitly.
+8. If ANY information is ambiguous or missing, set "needs_clarification" to true and list your questions.
+9. Estimate complexity: "low" (< 2h), "medium" (2–8h), "high" (> 8h).
 
 OUTPUT FORMAT:
 Respond with a single JSON object only. No text outside the JSON.
@@ -33,9 +38,10 @@ Respond with a single JSON object only. No text outside the JSON.
     "Given X, when Y, then Z",
     "Given A, when B, then C"
   ],
+  "target_repos": ["api"],
   "files_to_change": [
-    {{"path": "calculator.py", "reason": "Add divide() function"}},
-    {{"path": "tests/test_calculator.py", "reason": "Add tests for divide()"}}
+    {{"path": "calculator.py", "repo": "api", "reason": "Add divide() function"}},
+    {{"path": "tests/test_calculator.py", "repo": "api", "reason": "Add tests for divide()"}}
   ],
   "function_signatures": [
     "def divide(a: float, b: float) -> float"

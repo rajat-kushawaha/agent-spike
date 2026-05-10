@@ -448,7 +448,124 @@ agent-spike/
 - **Poll interval:** Currently 30 seconds. Could be event-driven (Jira webhook → queue) for lower latency and cost.
 - **No CI enforcement:** Tech Lead is instructed to ignore CI. In a real project, you'd want the agent to wait for CI to pass before reviewing.
 - **Human merge step:** By design, agents never merge. A human must click Merge on approved PRs.
-- **Stuck state recovery:** If an agent crashes mid-cycle, the ticket stays in `IN_DEVELOPMENT` or `UNDER_REVIEW`. Currently requires manual reset. Could add a watchdog that auto-resets tickets stuck in a non-terminal state for >10 minutes.
+- ~~**Stuck state recovery**~~ — fixed (see Phase 6).
+
+---
+
+## Phase 6 — Multi-Repo Support
+
+### Feature — One Ticket Can Touch Multiple Repos
+
+**Motivation:** Real projects have separate repos for API and UI (e.g. `revelio-api` and `revelio-ui`). A single Jira ticket may require changes in both.
+
+**Design:**
+- Added `GITHUB_REPOS` env var: comma-separated `name:owner/repo` pairs
+  ```
+  GITHUB_REPOS=api:rajat-gitting/revelio-api,ui:rajat-gitting/revelio-ui
+  ```
+- `config.py` parses this into a `github_repos: dict` (e.g. `{"api": "rajat-gitting/revelio-api", "ui": "..."}`)
+- `GitHubClient` gains two new methods:
+  - `for_repo(repo_name)` — returns a new client scoped to a specific repo
+  - `resolve_repo(key)` — looks up a key from config and returns the scoped client
+- BA analysis prompt now receives `AVAILABLE REPOSITORIES` and outputs `target_repos: list[str]` — the list of repo keys the ticket touches
+- Each `files_to_change` entry now has a `repo` key so Dev knows which repo each file goes to
+- Dev agent resolves all target repos at the start of `_implement`, creates the branch in each, routes each chunk's files to the correct repo client, and raises one PR per repo
+- State stores `pr_numbers: dict` (key → PR number) alongside the primary `pr_number`
+
+**Files changed:**
+- `config.py` — added `github_repos` field and `_parse_github_repos()`
+- `github_client.py` — added `for_repo()`, `resolve_repo()`
+- `agents/ba_agent.py` — passes `available_repos` to BA analysis prompt
+- `agents/dev_agent.py` — multi-repo branch creation, chunk routing, multi-PR creation
+- `prompts/ba_analysis.txt` — added `AVAILABLE REPOSITORIES` section and `target_repos` field
+- `.env` — added `GITHUB_REPOS` with keyword hints, removed `GITHUB_REPO`
+
+### Improvement — Keyword-Based Repo Detection
+
+**Problem:** Having both `GITHUB_REPO` (single default) and `GITHUB_REPOS` (multi-repo map) was confusing and redundant. More importantly, the BA agent was just passing repo names to the AI without any guidance on which tickets belong where — the AI had to guess.
+
+**Fix:** Removed `GITHUB_REPO` entirely. `GITHUB_REPOS` now carries keywords per repo:
+```
+GITHUB_REPOS=api:rajat-gitting/revelio-api:api,backend,auth,endpoint,server,database,model,service;ui:rajat-gitting/revelio-ui:ui,frontend,react,component,page,screen,css,style
+```
+
+The BA analysis prompt receives these with their keywords:
+```
+- api: rajat-gitting/revelio-api (keywords: api, backend, auth, endpoint, ...)
+- ui: rajat-gitting/revelio-ui (keywords: ui, frontend, react, component, ...)
+```
+
+The AI matches ticket content against keywords to determine `target_repos` automatically — no human tagging needed. A "user profile page with API endpoint" ticket correctly resolves to `["api", "ui"]`. To add a new repo, add one entry to `GITHUB_REPOS`.
+
+### Fix — Chunk-Level Resume on Restart
+
+**Problem:** If the Dev agent was stopped mid-implementation (e.g. after chunk 8 of 13), on restart it would re-plan from scratch and re-commit all chunks from chunk 1, creating duplicate commits on the branch.
+
+**Fix:** Save implementation progress to state after every successful chunk commit:
+- `impl_plan` — the full plan (chunks, PR title/body) saved after planning, before any commits
+- `completed_chunks` — index of the last successfully committed chunk, incremented after each commit
+
+On restart, if `impl_plan` and `completed_chunks > 0` are present in state, the agent skips re-planning and jumps straight to the next unfinished chunk. Already-committed chunks are skipped with a log message. Both fields are cleared when the PR is raised.
+
+### Fix — Automatic Stuck Task Recovery on Startup
+
+**Problem:** If any agent was stopped mid-cycle (Ctrl+C, crash, restart), the ticket would stay in `IN_DEVELOPMENT` or `UNDER_REVIEW` forever. No agent picks up those statuses — they're meant to be transient. Required manual `set_status` to unblock.
+
+**Fix:** Added `StateManager.recover_stuck_tasks()` called at the top of each runner's `main()` before the poll loop starts. Recovery map:
+- `IN_DEVELOPMENT` → `BA_DESCRIPTION_UPDATED` (Dev picks it up)
+- `UNDER_REVIEW` → `PR_RAISED` (Tech Lead picks it up)
+- `BA_ANALYZING` → removed from state (BA re-fetches from Jira)
+
+Also cleans up stale lock files during recovery. Safe with multiple instances — only recovers tickets with no active lock (or an expired one).
+
+### Improvement — Branch Names and Commit Message Format
+
+**Branch naming:** Changed from `feature/kan-8-long-description` to just the ticket ID (e.g. `KAN-8`, `CR-1`). Enforced in code — `branch_name` is hardcoded to `ticket_id` in `dev_agent.py` regardless of what the AI returns in the plan.
+
+**Commit messages:** All commits now follow `TICKET-ID | description` format (e.g. `CR-1 | add authentication endpoints and JWT middleware`). A `_fmt_commit()` helper in `dev_agent.py` wraps every commit call and strips any AI-generated prefix to avoid duplication like `CR-1 | CR-1 | message`.
+
+---
+
+## Phase 7 — Multi-Repo Routing Bugs
+
+### Bug 1 — UI PR Not Raised (422 on Empty Branch)
+
+**Symptom:** Dev raised the `api` PR successfully but crashed before recording state. Ticket marked `FAILED`. Tech Lead had nothing to pick up.
+
+**Root cause:** PR creation looped over all repos — `api` succeeded, `ui` had no commits (all UI chunks were silrouted to `api`), `ui` threw 422, exception killed the whole task before state was written.
+
+**Fix:** Wrapped each repo's `create_pull_request` in its own try/except. A repo with no commits logs a warning and is skipped — other repos' PRs are still recorded.
+
+---
+
+### Bug 2 — All Chunks Committed to Wrong Repo (`api` instead of `ui`)
+
+**Symptom:** Dev agent did lots of UI work but made zero commits to `ui` repo. All UI files ended up in `api`.
+
+**Root cause:** `repo_key` was never in the implement chunk prompt or the plan prompt. The AI never returned it. The fallback `github_clients.get("default", primary_gh)` always resolved to `primary_gh` (the `api` client).
+
+**Fix (three-layer):**
+1. `prompts/dev_plan.txt` — each chunk now requires `repo_key` matching the target repo. Instruction added: one repo per chunk, derive from `files_to_change[].repo` in the BA analysis.
+2. `prompts/dev_implement_chunk.txt` — `repo_key` added to output schema.
+3. `agents/dev_agent.py` — commit routing priority: `chunk["repo_key"]` (from plan) → BA path→repo map → primary. Plan value is set once before any implementation call, making it the most reliable source.
+
+**Also fixed:** `_fix()` had the same bug — all fix commits went to `self._github` (api). Rewrote to group fixed files by repo using the same BA path→repo map and commit each group to the correct client.
+
+---
+
+### Bug 3 — Tech Lead Only Reviewed Primary (api) PR, Ignored ui PR
+
+**Symptom:** Tech Lead reviewed `api` PR, posted comment, then on next cycle saw `last_reviewed_sha` matched and set status to `CHANGES_REQUESTED` — never looked at the `ui` PR.
+
+**Root cause:** `_review_task` only used `task["pr_number"]` (single integer). No concept of iterating `pr_numbers` dict. SHA dedup was a single scalar `last_reviewed_sha`, not per-repo.
+
+**Fix:** Rewrote `_review_task` to:
+- Loop over all entries in `pr_numbers: dict[str, int]`
+- Resolve the correct `GitHubClient` per repo via `resolve_repo(key)`
+- Fetch only that repo's files (filtered by BA `path_to_repo` map)
+- Track SHA dedup as `last_reviewed_shas: dict[str, str]` keyed by repo
+- Collect all decisions — only `APPROVED` when every repo approves; `CHANGES_REQUESTED` if any repo needs changes
+- Split `_approve`/`_request_changes` into `_approve_repo`/`_request_changes_repo` (per-PR actions) + `_finalise_approval`/`_finalise_changes_requested` (ticket-level state update)
 
 ---
 

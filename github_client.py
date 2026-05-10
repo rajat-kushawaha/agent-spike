@@ -29,14 +29,33 @@ _CI_MAX_WAIT = 600  # bail out after 10 minutes
 
 
 class GitHubClient:
-    def __init__(self, config: Config, dry_run: bool = False) -> None:
+    def __init__(self, config: Config, dry_run: bool = False, repo_name: str | None = None) -> None:
         self._gh = Github(config.github_token)
-        self._repo_name = config.github_repo
+        # repo_name can be passed directly (e.g. "owner/repo") or resolved from config
+        if repo_name is None:
+            # Default to the first repo in GITHUB_REPOS
+            first = next(iter(config.github_repos.values()), {})
+            repo_name = first.get("repo", "")
+        self._repo_name = repo_name
         self._base_branch = config.github_base_branch
         self._dry_run = dry_run
         self._token = config.github_token
-        # Lazy-loaded to avoid auth check at construction time
+        self._config = config
         self._repo: Repository | None = None
+
+    def for_repo(self, repo_name: str) -> "GitHubClient":
+        """Return a new GitHubClient scoped to a specific owner/repo string."""
+        return GitHubClient(self._config, dry_run=self._dry_run, repo_name=repo_name)
+
+    def resolve_repo(self, repo_key: str) -> "GitHubClient":
+        """
+        Resolve a repo key (e.g. 'api', 'ui') from config.github_repos
+        and return a GitHubClient scoped to that repo.
+        """
+        entry = self._config.github_repos.get(repo_key)
+        if not entry:
+            raise ValueError(f"Repo key '{repo_key}' not found in GITHUB_REPOS. Available: {list(self._config.github_repos)}")
+        return self.for_repo(entry["repo"])
 
     @property
     def repo(self) -> Repository:

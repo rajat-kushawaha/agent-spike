@@ -131,6 +131,11 @@ class BAAgent:
             },
         )
 
+        available_repos = "\n".join(
+            f"- {key}: {entry['repo']} (keywords: {', '.join(entry['keywords'])})"
+            for key, entry in self._config.github_repos.items()
+        )
+
         analysis = self._ai.complete(
             "ba_analysis.txt",
             system_message=system_message,
@@ -139,6 +144,7 @@ class BAAgent:
             ticket_description=description or "(no description provided)",
             ticket_comments=comments or "(no comments)",
             ticket_labels=", ".join(labels) if labels else "(none)",
+            available_repos=available_repos,
         )
 
         if analysis.get("dry_run"):

@@ -29,6 +29,7 @@ Respond with a single JSON object only.
 ```json
 {{
   "ticket_id": "{ticket_id}",
+  "repo_key": "api",
   "commit_message": "feat({ticket_id}): short description of this chunk",
   "files": {{
     "path/to/file.py": "# complete file content including all existing and new code\n..."
@@ -36,3 +37,5 @@ Respond with a single JSON object only.
   "acceptance_criteria_covered": ["exact AC text that this commit satisfies"]
 }}
 ```
+
+The `repo_key` must match the repo key from the BA analysis `target_repos` (e.g. "api" or "ui"). All files in a single chunk response must belong to the same repo.

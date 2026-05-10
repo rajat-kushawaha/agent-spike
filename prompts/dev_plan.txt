@@ -12,9 +12,11 @@ INSTRUCTIONS:
    - Be independently committable (code + tests together)
    - Cover one or more related acceptance criteria
    - Leave the codebase in a working state after it is committed
+   - Target exactly ONE repo (never mix files from different repos in one chunk)
 3. Order chunks so dependencies come first (e.g. data models before API routes).
 4. Do NOT start implementing yet — only plan.
-5. Choose a branch name following the format: feature/{ticket_id_lower}-short-description
+5. Branch name must be exactly the ticket ID (e.g. "CR-1", "KAN-8") — nothing else.
+6. Each chunk must include a `repo_key` matching one of the keys in `target_repos` from the BA analysis (e.g. "api", "ui"). Use the `repo` field on each file in `files_to_change` to determine which repo each file belongs to.
 
 OUTPUT FORMAT:
 Respond with a single JSON object only.
@@ -22,12 +24,13 @@ Respond with a single JSON object only.
 ```json
 {{
   "ticket_id": "{ticket_id}",
-  "branch_name": "feature/{ticket_id_lower}-short-description",
+  "branch_name": "{ticket_id}",
   "pr_title": "[{ticket_id}] Short descriptive PR title",
   "pr_body": "## Summary\nWhat this PR implements.\n\n## Acceptance Criteria\n- [ ] AC 1\n- [ ] AC 2",
   "chunks": [
     {{
       "description": "Short description of this chunk",
+      "repo_key": "api",
       "files": ["path/to/file1.py", "path/to/test_file1.py"],
       "acceptance_criteria_covered": ["Exact AC text from the spec"]
     }}
@@ -35,27 +38,28 @@ Respond with a single JSON object only.
 }}
 ```
 
-EXAMPLE (for a ticket with 3 ACs):
+EXAMPLE (for a ticket touching both api and ui repos):
 ```json
 {{
-  "ticket_id": "KAN-5",
-  "branch_name": "feature/kan-5-add-calculator-functions",
-  "pr_title": "[KAN-5] Add divide and power functions to calculator",
-  "pr_body": "## Summary\nAdds divide() and power() to calculator.py with full test coverage.\n\n## Acceptance Criteria\n- [ ] divide(a,b) returns a/b\n- [ ] divide(a,0) raises ValueError\n- [ ] power(base, exp) returns base**exp",
+  "ticket_id": "CR-5",
+  "branch_name": "CR-5",
+  "pr_title": "[CR-5] Add blog listing endpoint and homepage",
+  "pr_body": "## Summary\nBackend blog endpoint and frontend homepage card grid.\n\n## Acceptance Criteria\n- [ ] AC 1\n- [ ] AC 2",
   "chunks": [
     {{
-      "description": "Add divide() function with zero-division guard and tests",
-      "files": ["calculator.py", "tests/test_calculator.py"],
+      "description": "Add Blog model and BlogService with published filtering",
+      "repo_key": "api",
+      "files": ["src/main/java/com/example/model/Blog.java", "src/test/java/com/example/model/BlogTest.java"],
       "acceptance_criteria_covered": [
-        "Given two numbers a and b where b != 0, divide(a, b) returns a / b as a float",
-        "Given b == 0, divide(a, b) raises ValueError with message 'Cannot divide by zero'"
+        "Given the backend API endpoint GET /api/blogs is called, only published posts are returned"
       ]
     }},
     {{
-      "description": "Add power() function with edge case handling and tests",
-      "files": ["calculator.py", "tests/test_calculator.py"],
+      "description": "Create BlogCard and SkeletonCard components",
+      "repo_key": "ui",
+      "files": ["src/components/BlogCard.tsx", "src/components/SkeletonCard.tsx"],
       "acceptance_criteria_covered": [
-        "Given a base and exponent, power(base, exponent) returns base raised to the power of exponent"
+        "Given the API returns blog posts, each card displays title, excerpt, author, tags and timestamp"
       ]
     }}
   ]

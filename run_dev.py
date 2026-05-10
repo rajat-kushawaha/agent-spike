@@ -52,7 +52,7 @@ def main() -> int:
     slack = SlackClient(config, dry_run=args.dry_run)
     github = GitHubClient(config, dry_run=args.dry_run)
     agent = DevAgent(config, state, ai, jira, slack, github)
-
+    state.recover_stuck_tasks()
     log.info("Dev agent started (pid=%d, dry_run=%s, once=%s)", os.getpid(), args.dry_run, args.once)
 
     if args.once:

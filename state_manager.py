@@ -139,7 +139,53 @@ class StateManager:
         return task.get("status") if task else None
 
     def all_tasks(self) -> dict[str, Any]:
-        return dict(self._load()["tasks"])
+        return dict(self._load().get("tasks", {}))
+
+    def recover_stuck_tasks(self) -> None:
+        """
+        On agent startup, reset any tickets stuck in transient in-progress statuses
+        back to the last actionable status so they get picked up again.
+
+        Safe to call from multiple agents simultaneously — each uses a different
+        recovery mapping so they won't conflict.
+
+        Recovery map:
+          IN_DEVELOPMENT  → BA_DESCRIPTION_UPDATED  (Dev picks it up)
+          UNDER_REVIEW    → PR_RAISED               (Tech Lead picks it up)
+          BA_ANALYZING    → (dropped from state, BA re-fetches from Jira)
+        """
+        _recovery = {
+            "IN_DEVELOPMENT": "BA_DESCRIPTION_UPDATED",
+            "UNDER_REVIEW": "PR_RAISED",
+        }
+        state = self._load()
+        changed = False
+        for task_id, task in state.get("tasks", {}).items():
+            status = task.get("status")
+            # Only recover if no active lock — a live agent may genuinely hold it
+            lock_path = self._lock_dir / f"{task_id}.lock"
+            if lock_path.exists():
+                age = time.time() - lock_path.stat().st_mtime
+                if age <= LOCK_TTL_SECONDS:
+                    continue  # another process is actively working on it
+                lock_path.unlink(missing_ok=True)  # stale — clean it up
+
+            if status in _recovery:
+                new_status = _recovery[status]
+                log.warning(
+                    "Recovering stuck task %s: %s → %s", task_id, status, new_status
+                )
+                task["status"] = new_status
+                changed = True
+            elif status == "BA_ANALYZING":
+                # BA was mid-analysis — safest to let BA re-fetch from Jira
+                # Remove from state so BA treats it as a new ticket
+                log.warning("Removing stuck BA_ANALYZING task %s — BA will re-fetch from Jira", task_id)
+                del state["tasks"][task_id]
+                changed = True
+
+        if changed:
+            self._save(state)
 
     def increment_fix_attempts(self, task_id: str) -> int:
         state = self._load()

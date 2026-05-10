@@ -43,6 +43,14 @@ _TRIGGER_STATUSES = {
 _MAX_CHUNKS = 8
 
 
+def _fmt_commit(ticket_id: str, message: str) -> str:
+    """Enforce commit message format: 'TICKET-ID | message'."""
+    # Strip any existing ticket prefix the AI may have added to avoid duplication
+    import re as _re
+    clean = _re.sub(r"^[\w-]+\s*\|?\s*", "", message).strip() if "|" in message else message.strip()
+    return f"{ticket_id} | {clean}"
+
+
 class DevAgent:
     def __init__(
         self,
@@ -105,37 +113,80 @@ class DevAgent:
         log.info("Dev agent implementing %s (%d ACs)", ticket_id, len(acceptance_criteria))
         self._state.set_status(ticket_id, "IN_DEVELOPMENT")
 
-        # Step 1: plan chunks
-        existing_files_text = self._fetch_existing_files(ba_analysis.get("files_to_change", []))
-        plan = self._ai.complete(
-            "dev_plan.txt",
-            system_message=system_message,
-            ticket_id=ticket_id,
-            ba_analysis=json.dumps(ba_analysis, indent=2),
-            existing_files=existing_files_text,
-            ticket_id_lower=ticket_id.lower(),
-        )
+        branch_name: str = ticket_id  # always use ticket ID as branch name
 
-        if plan.get("dry_run"):
-            log.info("Dry-run: skipping dev implementation for %s", ticket_id)
-            self._state.upsert_task(ticket_id, {"status": "PR_RAISED"})
-            return
+        # Resolve target repos
+        target_repo_keys: list[str] = ba_analysis.get("target_repos", ["default"])
+        github_clients: dict[str, Any] = {
+            key: self._github.resolve_repo(key) for key in target_repo_keys
+        }
+        primary_gh = next(iter(github_clients.values()))
 
-        branch_name: str = plan.get("branch_name", f"feature/{ticket_id.lower()}")
-        chunks: list[dict] = plan.get("chunks", [])
-        pr_title: str = plan.get("pr_title", f"feat: {ticket_id}")
-        pr_body: str = plan.get("pr_body", "")
+        # Resume from saved plan if available (restart recovery)
+        saved_plan: dict = task.get("impl_plan", {})
+        completed_chunks: int = task.get("completed_chunks", 0)
+        all_committed_files: dict[str, str] = dict(task.get("submitted_files", {}))
 
-        if not chunks:
-            raise ValueError(f"AI returned no implementation chunks for {ticket_id}")
+        if saved_plan and completed_chunks > 0:
+            log.info(
+                "Resuming %s from chunk %d/%d (restart recovery)",
+                ticket_id, completed_chunks + 1, len(saved_plan.get("chunks", [])),
+            )
+            chunks = saved_plan.get("chunks", [])
+            pr_title = saved_plan.get("pr_title", f"feat: {ticket_id}")
+            pr_body = saved_plan.get("pr_body", "")
+            existing_files_text = ""
+        else:
+            # Step 1: plan chunks (fresh start)
+            existing_files_text = self._fetch_existing_files(ba_analysis.get("files_to_change", []))
+            plan = self._ai.complete(
+                "dev_plan.txt",
+                system_message=system_message,
+                ticket_id=ticket_id,
+                ba_analysis=json.dumps(ba_analysis, indent=2),
+                existing_files=existing_files_text,
+                ticket_id_lower=ticket_id.lower(),
+            )
 
-        self._github.create_branch(branch_name)
-        self._state.upsert_task(ticket_id, {"branch_name": branch_name})
+            if plan.get("dry_run"):
+                log.info("Dry-run: skipping dev implementation for %s", ticket_id)
+                self._state.upsert_task(ticket_id, {"status": "PR_RAISED"})
+                return
 
-        all_committed_files: dict[str, str] = {}
+            chunks = plan.get("chunks", [])
+            pr_title = plan.get("pr_title", f"feat: {ticket_id}")
+            pr_body = plan.get("pr_body", "")
 
-        # Step 2: implement each chunk and commit
+            if not chunks:
+                raise ValueError(f"AI returned no implementation chunks for {ticket_id}")
+
+            # Save plan to state immediately so restarts can resume
+            self._state.upsert_task(ticket_id, {
+                "impl_plan": plan,
+                "completed_chunks": 0,
+                "branch_name": branch_name,
+                "target_repos": target_repo_keys,
+            })
+            completed_chunks = 0
+
+        # Build a path → repo_key lookup from the BA's files_to_change
+        path_to_repo: dict[str, str] = {
+            entry["path"]: entry["repo"]
+            for entry in ba_analysis.get("files_to_change", [])
+            if entry.get("path") and entry.get("repo")
+        }
+
+        # Create branches (no-op if already exist)
+        for key, gh in github_clients.items():
+            gh.create_branch(branch_name)
+            log.info("Created branch %s in repo %s", branch_name, gh._repo_name)
+
+        # Step 2: implement each chunk and commit, skipping already-completed ones
         for i, chunk in enumerate(chunks[:_MAX_CHUNKS], 1):
+            if i <= completed_chunks:
+                log.info("Skipping chunk %d/%d for %s — already committed", i, len(chunks), ticket_id)
+                continue
+
             chunk_desc = chunk.get("description", f"chunk {i}")
             acs_covered = chunk.get("acceptance_criteria_covered", [])
             log.info(
@@ -143,7 +194,6 @@ class DevAgent:
                 i, len(chunks), ticket_id, chunk_desc, len(acs_covered),
             )
 
-            # Build context: what's already on the branch
             current_branch_text = self._fetch_branch_files_raw(branch_name, list(all_committed_files.keys()))
             if not current_branch_text and existing_files_text:
                 current_branch_text = existing_files_text
@@ -167,13 +217,19 @@ class DevAgent:
                 log.warning("Chunk %d returned no files for %s — skipping", i, ticket_id)
                 continue
 
-            commit_msg = chunk_result.get(
-                "commit_message",
-                f"feat({ticket_id}): {chunk_desc}",
-            )
-            self._github.commit_files(branch_name, files, commit_msg)
+            commit_msg = _fmt_commit(ticket_id, chunk_result.get("commit_message", chunk_desc))
+            # Repo routing priority: plan chunk (set at plan time) → BA path map → primary
+            repo_key = chunk.get("repo_key") or path_to_repo.get(next(iter(files), "")) or ""
+            gh = github_clients.get(repo_key, primary_gh)
+            gh.commit_files(branch_name, files, commit_msg)
             all_committed_files.update(files)
-            log.info("Committed chunk %d for %s: %s", i, ticket_id, list(files.keys()))
+
+            # Save progress after every successful commit — restart resumes from here
+            self._state.upsert_task(ticket_id, {
+                "completed_chunks": i,
+                "submitted_files": all_committed_files,
+            })
+            log.info("Committed chunk %d for %s to %s: %s", i, ticket_id, gh._repo_name, list(files.keys()))
 
         # Step 3: self-check — are ALL acceptance criteria covered?
         log.info("Dev agent running self-check for %s", ticket_id)
@@ -209,31 +265,47 @@ class DevAgent:
             if not remainder.get("dry_run"):
                 remainder_files: dict[str, str] = remainder.get("files", {})
                 if remainder_files:
-                    self._github.commit_files(
+                    primary_gh.commit_files(
                         branch_name,
                         remainder_files,
-                        f"feat({ticket_id}): cover remaining acceptance criteria",
+                        _fmt_commit(ticket_id, "cover remaining acceptance criteria"),
                     )
                     all_committed_files.update(remainder_files)
                     log.info("Committed remainder for %s: %s", ticket_id, list(remainder_files.keys()))
 
-        # Step 4: raise PR — only now, after everything is implemented
-        pr_number = self._github.create_pull_request(branch_name, pr_title, pr_body)
-        log.info("Dev agent raised PR #%d for %s", pr_number, ticket_id)
+        # Step 4: raise one PR per repo — only now, after everything is implemented
+        pr_numbers: dict[str, int] = {}
+        for key, gh in github_clients.items():
+            try:
+                pr_num = gh.create_pull_request(branch_name, pr_title, pr_body)
+                pr_numbers[key] = pr_num
+                log.info("Dev agent raised PR #%d in %s for %s", pr_num, gh._repo_name, ticket_id)
+            except Exception as exc:
+                # 422 = no commits on branch (repo had no changes for this ticket)
+                log.warning("Skipping PR for repo %s (%s): %s", key, gh._repo_name, exc)
+
+        # Primary PR number stored for Tech Lead to review
+        primary_pr = pr_numbers.get(target_repo_keys[0], 0)
 
         self._state.upsert_task(
             ticket_id,
             {
                 "status": "PR_RAISED",
                 "branch_name": branch_name,
-                "pr_number": pr_number,
+                "pr_number": primary_pr,
+                "pr_numbers": pr_numbers,
+                "target_repos": target_repo_keys,
                 "submitted_files": all_committed_files,
+                # Clear resume fields — no longer needed once PR is raised
+                "impl_plan": None,
+                "completed_chunks": 0,
             },
         )
 
+        pr_summary = ", ".join(f"#{n} ({k})" for k, n in pr_numbers.items())
         try:
             self._slack.post_task_update(
-                ticket_id, "Dev", f"PR #{pr_number} raised for {ticket_id} — all ACs implemented"
+                ticket_id, "Dev", f"PRs raised for {ticket_id}: {pr_summary} — all ACs implemented"
             )
         except Exception as exc:
             log.warning("Slack notification failed: %s", exc)
@@ -245,7 +317,7 @@ class DevAgent:
     def _fix(self, task: dict[str, Any], system_message: str) -> None:
         ticket_id: str = task["id"]
         ba_analysis: dict = task.get("ba_analysis", {})
-        branch_name: str = task.get("branch_name", f"feature/{ticket_id.lower()}")
+        branch_name: str = task.get("branch_name", ticket_id)
         pr_number: int = task.get("pr_number", 0)
         review_feedback: list[str] = task.get("review_feedback", [])
 
@@ -255,11 +327,24 @@ class DevAgent:
         )
         self._state.set_status(ticket_id, "IN_DEVELOPMENT")
 
+        # Resolve repo clients (same as _implement)
+        target_repo_keys: list[str] = ba_analysis.get("target_repos", ["default"])
+        github_clients: dict[str, Any] = {
+            key: self._github.resolve_repo(key) for key in target_repo_keys
+        }
+        primary_gh = next(iter(github_clients.values()))
+
+        # Build path → repo_key lookup from BA plan
+        path_to_repo: dict[str, str] = {
+            entry["path"]: entry["repo"]
+            for entry in ba_analysis.get("files_to_change", [])
+            if entry.get("path") and entry.get("repo")
+        }
+
         # Deduplicate feedback — strip round labels and collapse identical issues
         seen_issues: set[str] = set()
         deduped_feedback: list[str] = []
         for item in review_feedback:
-            # Strip "[Round N] " prefix for dedup comparison
             import re as _re
             bare = _re.sub(r"^\[Round \d+\]\s*", "", item).strip().lower()
             if bare not in seen_issues:
@@ -296,13 +381,19 @@ class DevAgent:
         files: dict[str, str] = result.get("files", {})
         if not files:
             raise ValueError(f"Fix AI returned no files for {ticket_id} — will retry next cycle")
-        else:
-            self._github.create_branch(branch_name)  # no-op if exists
-            commit_msg = result.get(
-                "commit_message", f"fix({ticket_id}): address all tech lead feedback"
-            )
-            self._github.commit_files(branch_name, files, commit_msg)
-            log.info("Fix committed for %s: %s", ticket_id, list(files.keys()))
+
+        # Group fixed files by repo and commit to the right client
+        files_by_repo: dict[str, dict[str, str]] = {}
+        for path, content in files.items():
+            repo_key = path_to_repo.get(path, target_repo_keys[0])
+            files_by_repo.setdefault(repo_key, {})[path] = content
+
+        commit_msg = _fmt_commit(ticket_id, result.get("commit_message", "address all tech lead feedback"))
+        for repo_key, repo_files in files_by_repo.items():
+            gh = github_clients.get(repo_key, primary_gh)
+            gh.create_branch(branch_name)  # no-op if exists
+            gh.commit_files(branch_name, repo_files, commit_msg)
+            log.info("Fix committed for %s to %s: %s", ticket_id, gh._repo_name, list(repo_files.keys()))
 
         self._state.upsert_task(
             ticket_id,

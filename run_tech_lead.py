@@ -54,7 +54,7 @@ def main() -> int:
     slack = SlackClient(config, dry_run=args.dry_run)
     github = GitHubClient(config, dry_run=args.dry_run)
     agent = TechLeadAgent(config, state, ai, jira, slack, github)
-
+    state.recover_stuck_tasks()
     log.info("Tech Lead agent started (pid=%d, dry_run=%s, once=%s)", os.getpid(), args.dry_run, args.once)
 
     if args.once:

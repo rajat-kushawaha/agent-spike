@@ -27,9 +27,9 @@ _PROMPT_DIR = Path(__file__).parent / "prompts"
 _MAX_RETRIES = 3
 _RETRY_DELAY = 5  # seconds
 # High token limit so large file outputs don't get truncated mid-JSON
-_MAX_TOKENS = 16000
+_MAX_TOKENS = 32000
 # Max continuation attempts when the response is cut off
-_MAX_CONTINUATIONS = 3
+_MAX_CONTINUATIONS = 5
 
 
 class AIClient:

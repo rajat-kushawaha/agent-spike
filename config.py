@@ -50,7 +50,7 @@ class Config:
 
     # GitHub
     github_token: str
-    github_repo: str
+    github_repos: dict        # name → {repo, keywords} mapping
     github_base_branch: str
 
     # Jira status names (configurable so boards with custom workflows work)
@@ -62,6 +62,43 @@ class Config:
     # Orchestrator behaviour
     poll_interval_seconds: int
     state_file: str
+
+
+def _parse_github_repos() -> dict:
+    """
+    Parse GITHUB_REPOS env var into a structured dict.
+
+    Format (semicolon-separated repos, pipe-separated fields):
+      api:rajat-gitting/revelio-api:api,backend,auth,endpoint;ui:rajat-gitting/revelio-ui:ui,frontend,react,component
+
+    Each entry: <key>:<owner/repo>:<comma-separated keywords>
+    Keywords are optional — if omitted the key itself is used as the only keyword.
+
+    Result:
+      {
+        "api": {"repo": "rajat-gitting/revelio-api", "keywords": ["api", "backend", "auth", "endpoint"]},
+        "ui":  {"repo": "rajat-gitting/revelio-ui",  "keywords": ["ui", "frontend", "react", "component"]},
+      }
+    """
+    raw = os.getenv("GITHUB_REPOS", "")
+    repos: dict[str, dict] = {}
+    if raw:
+        for entry in raw.split(";"):
+            entry = entry.strip()
+            if not entry:
+                continue
+            parts = entry.split(":")
+            if len(parts) < 2:
+                continue
+            key = parts[0].strip()
+            repo = parts[1].strip()
+            keywords = [k.strip() for k in parts[2].split(",")] if len(parts) > 2 else [key]
+            repos[key] = {"repo": repo, "keywords": keywords}
+    if not repos:
+        raise EnvironmentError(
+            "GITHUB_REPOS is required. Format: api:owner/repo:keyword1,keyword2;ui:owner/repo:keyword1,keyword2"
+        )
+    return repos
 
 
 def load_config() -> Config:
@@ -78,7 +115,7 @@ def load_config() -> Config:
         slack_channel_id=_require("SLACK_CHANNEL_ID"),
         slack_clarification_channel_id=_optional("SLACK_CLARIFICATION_CHANNEL_ID", ""),
         github_token=_require("GITHUB_TOKEN"),
-        github_repo=_require("GITHUB_REPO"),
+        github_repos=_parse_github_repos(),
         github_base_branch=_optional("GITHUB_BASE_BRANCH", "main"),
         jira_status_backlog=_optional("JIRA_STATUS_BACKLOG", "Backlog"),
         jira_status_in_progress=_optional("JIRA_STATUS_IN_PROGRESS", "In Progress"),
