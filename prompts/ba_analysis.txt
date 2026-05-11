@@ -20,10 +20,13 @@ ACTUAL FILES IN EACH REPOSITORY (every path here is real — use these to unders
 INSTRUCTIONS:
 1. Identify the core functional requirement from all available fields — summary, description, comments, and labels.
 2. Break the requirement into discrete, testable acceptance criteria (Given/When/Then format). Each criterion must be independently verifiable.
-3. Determine which repos need changes by matching the ticket content against the repo keywords. Set "target_repos" to those repo keys. A full-stack ticket will target multiple repos (e.g. ["api", "ui"]).
-4. For each target repo, describe what needs to change in plain English under "repo_changes". Do NOT list specific file paths — the developer will read the codebase and decide which files to touch. Describe the functional area and what needs to happen (e.g. "Add a new blog entry to the data/seed layer", "Update the page background colour in the blogs page styling").
-5. Use the file list to inform your understanding of the codebase (e.g. "the API uses Java Spring Boot", "the UI has a BlogCard component") so your acceptance criteria and notes are accurate. But do not copy file paths into the output.
-6. Specify any key implementation constraints the developer must know (e.g. "blog data comes from the API, not hardcoded in the UI").
+3. Determine which repos need changes. Read the file list carefully:
+   - If the ticket adds or changes DATA (a new record, entry, or content), look at which repo owns the data layer. If one repo has a service, controller, or model layer (e.g. BlogService.java, a database, a seed file), changes to stored data MUST go in that repo — not the UI.
+   - A UI repo that fetches data from an API does NOT own that data. Adding a new item served by the API requires changing the API repo.
+   - Set "target_repos" to ALL repos that need changes. Missing a repo here means the developer will never touch it.
+4. For each target repo, describe what needs to change in plain English under "repo_changes". Do NOT list specific file paths — the developer will read the codebase and decide which files to touch. Describe the functional area and what needs to happen (e.g. "Add a new blog entry to the seed data layer in BlogService", "Update the page background colour in the blogs page styling").
+5. Use the file list to inform your understanding of the codebase (e.g. "the API uses Java Spring Boot with a BlogService", "the UI has a BlogCard component and fetches from the API") so your acceptance criteria and notes are accurate. But do not copy file paths into the output.
+6. Specify any key implementation constraints the developer must know (e.g. "blog data comes from the API's BlogService seed data, not hardcoded in the UI").
 7. Identify edge cases the developer must handle explicitly.
 8. Estimate complexity: "low" (< 2h), "medium" (2–8h), "high" (> 8h).
 9. CLARIFICATION RULES — only ask if you genuinely cannot proceed without the answer:
@@ -32,8 +35,8 @@ INSTRUCTIONS:
    - NEVER ask about position/ordering of new items — default to appending at the end.
    - NEVER ask whether to reuse existing components — always reuse what already exists.
    - NEVER ask about fields not mentioned in the ticket — use only what the ticket specifies.
-   - ONLY ask when a specific value is required that is not in the ticket and cannot be inferred (e.g. an exact hex colour, a specific external URL).
-   - If the ticket says "update X" without a value AND there is no sensible default, ask ONE focused question.
+   - MUST ASK when the ticket says "update X" (colour, size, text, URL, etc.) without giving the new value — there is no way to implement this correctly without knowing the value. Do not invent or default it.
+   - ONLY ask when a specific required value is absent from the ticket and cannot be inferred from context.
    - Aim for zero clarification questions. One is acceptable. More than two is a failure.
 
 OUTPUT FORMAT:
@@ -62,29 +65,31 @@ Respond with a single JSON object only. No text outside the JSON.
 }}
 ```
 
-EXAMPLE (ticket: add a blog post and change the page background colour):
+EXAMPLE (ticket: "Add a new blog card and update the blogs page background color" — no colour value given):
 ```json
 {{
   "ticket_id": "CR-14",
-  "needs_clarification": false,
-  "clarification_questions": [],
+  "needs_clarification": true,
+  "clarification_questions": [
+    "What should the new background color be for the blogs page? Please provide the exact hex code or CSS value (e.g. #f5f5f5)."
+  ],
   "summary": "Add a new blog post via the API seed data and update the blogs page background colour in the UI",
   "acceptance_criteria": [
     "Given the API is running, GET /api/blogs returns a post with title 'Development in the era of AI'",
     "Given the blogs page loads, the new post appears alongside existing posts",
-    "Given the blogs page loads, the background colour is visibly updated to a light grey",
+    "Given the blogs page loads, the background colour is updated to the specified value",
     "Existing posts, pagination, and page functionality are not broken"
   ],
   "target_repos": ["api", "ui"],
   "repo_changes": {{
-    "api": "Add a new blog entry to the seed data layer with title 'Development in the era of AI', summary 'How AI tools are reshaping the way developers write, review, and ship code.', and tags ['ai', 'development', 'productivity']",
-    "ui": "Update the background colour of the blogs page. The ticket does not specify an exact colour — use a clean light grey (#f5f5f5) as a sensible default."
+    "api": "Add a new blog entry to the seed data layer (BlogService) with title 'Development in the era of AI', summary 'How AI tools are reshaping the way developers write, review, and ship code.', and tags ['ai', 'development', 'productivity']. The file list shows BlogService.java owns blog data — this is where the new entry must go.",
+    "ui": "Update the background colour of the blogs page to the value confirmed via clarification."
   }},
   "edge_cases": [
     "Background colour change must not affect other pages",
     "New blog entry must not break existing pagination"
   ],
   "complexity": "low",
-  "implementation_notes": "Blog data is served from the Java API (BlogService seed data), not hardcoded in the UI. The UI fetches from GET /api/blogs. Only the api repo needs a new post; the UI only needs a styling change."
+  "implementation_notes": "Blog data is served from the Java API BlogService seedData(), not hardcoded in the UI. The UI fetches from GET /api/blogs. Both repos need changes: api for the new post, ui for the colour."
 }}
 ```
