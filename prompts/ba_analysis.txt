@@ -14,11 +14,14 @@ Existing Comments:
 AVAILABLE REPOSITORIES (key: repo — keywords that indicate changes belong here):
 {available_repos}
 
+ACTUAL REPOSITORY STRUCTURES (use these to generate correct file paths — do not guess):
+{repo_structures}
+
 INSTRUCTIONS:
 1. Identify the core functional requirement from all available fields — summary, description, comments, and labels.
 2. Break the requirement into discrete, testable acceptance criteria (Given/When/Then format). Each criterion must be independently verifiable.
 3. Determine which repos need changes by matching the ticket content against the repo keywords above. A full-stack ticket will target multiple repos (e.g. ["api", "ui"]).
-4. List every file that needs to change. For each file, set "repo" to the repo key it belongs to.
+4. List every file that needs to change. For each file, set "repo" to the repo key it belongs to. Use the ACTUAL REPOSITORY STRUCTURES above to derive real paths — match the language, directory layout, and naming conventions already present in the repo. Never guess a language or path structure.
 5. Set "target_repos" to the list of repo keys that need changes (derived from step 3).
 6. Specify exact function signatures with type hints.
 7. Identify edge cases the developer must handle explicitly.

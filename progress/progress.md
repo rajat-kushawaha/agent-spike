@@ -614,3 +614,147 @@ The prompt was also updated to make this explicit:
 4. Rotated the API key — any key that was ever in a public repo should be considered compromised
 
 **Lesson:** Never paste real API keys into docs, even in curl examples. Use placeholders from day one.
+
+---
+
+### Problem — Tech Lead reviewing cross-repo ACs (false BLOCKER flood)
+
+**Symptom:** The Tech Lead agent was posting blockers like:
+> "BLOCKER: No UI implementation exists. PR only contains Java backend code. Missing: HomePage.tsx, BlogCard.tsx, SkeletonCard.tsx..."
+
+This happened on a backend-only PR for a ticket that also had a separate frontend PR. The agent was checking all acceptance criteria from the BA analysis (which covered both repos) against the backend code alone, flagging every frontend AC as a blocker.
+
+**Root cause:** The `tech_lead_review.txt` prompt said "Verify every acceptance criterion" with no concept of repo scope. The AI had no way to know it was reviewing a backend-only PR and that frontend ACs would be covered in a separate review.
+
+**Fix — two-part:**
+
+1. **Prompt** (`prompts/tech_lead_review.txt`) — added `{repo_context}` variable and a new CRITICAL instruction at the top:
+   > "Only evaluate acceptance criteria that can be verified from the files present in this PR. Do NOT flag missing frontend code when reviewing a backend PR, and vice versa."
+
+2. **Agent** (`agents/tech_lead_agent.py`) — populate `repo_context` per repo in the review loop:
+   - Single-repo ticket → "covers the full ticket scope"
+   - Multi-repo ticket → lists the current repo and names the other repos, explicitly telling the AI not to flag code belonging to them
+
+**Files changed:**
+- `prompts/tech_lead_review.txt` — added `{repo_context}` section + scoped review instruction
+- `agents/tech_lead_agent.py` — build `repo_context` string per repo before calling AI
+
+---
+
+### Problem — BA agent generating wrong file paths (Python paths for a Java repo)
+
+**Symptom:** BA agent produced `src/routes/blogs.py`, `src/models/blog.py` for `revelio-api` — a Spring Boot Java/Gradle project. Dev agent then wrote Java code to those wrong paths, and some Java files ended up committed to `revelio-ui`.
+
+**Root cause:** BA agent had no knowledge of actual repo structure or tech stack. It passed only repo names and keywords to the AI, which guessed Python (a common API pattern) for `revelio-api`.
+
+**Fix:**
+1. `github_client.py` — added `get_repo_structure(max_depth=2)` which fetches the real directory tree and primary language from GitHub
+2. `agents/ba_agent.py` — now accepts a `GitHubClient`, calls `_fetch_repo_structures()` before analysis, injects real repo trees into the prompt
+3. `prompts/ba_analysis.txt` — added `{repo_structures}` section and updated instruction 4: *"Use ACTUAL REPOSITORY STRUCTURES to derive real paths — never guess a language or path structure"*
+4. `run_ba.py` + `orchestrator.py` — wired `GitHubClient` into `BAAgent` constructor
+
+**Files changed:**
+- `github_client.py` — `get_repo_structure()`
+- `agents/ba_agent.py` — `_fetch_repo_structures()`, `GitHubClient` param
+- `prompts/ba_analysis.txt` — `{repo_structures}` + instruction 4
+- `run_ba.py`, `orchestrator.py` — constructor wiring
+
+---
+
+### Problem — Dev agent writing blind (no codebase awareness, 30% quality gap vs Claude Code)
+
+**Symptom:** Dev agent was:
+- Writing Java Spring Boot code with no `@RestController`/`@Service` annotations
+- Overwriting `BlogCard.tsx` and dropping its `default export` and full props interface
+- Not using existing hooks (`useApi`), types, or API client patterns already in the repo
+- Skipping files from the BA plan entirely with no one catching it
+- Tech lead approving PRs missing `HomePage.tsx`, `blogService.ts` etc.
+
+**Root cause:** The dev agent wrote code blind — no knowledge of what already existed in the codebase. It never read files before writing them, never saw existing patterns, and the tech lead only reviewed what was submitted without checking what was planned but absent.
+
+**Fix — 5 parts:**
+
+1. **`agents/dev_agent.py` — `_fetch_repo_context()` (new method)**
+   Before planning or writing any code, fetches per repo:
+   - Key shared files (`useApi.ts`, `client.ts`, `endpoints.ts`, `ApiResponse.java`, `HealthController.java` etc.) — the patterns the AI must follow
+   - Every planned file from `main` — so the AI knows what already exists
+   - Sibling files in the same directories — for naming/export/import conventions
+   Context injected into every prompt: planning, each chunk, self-check, and fix.
+
+2. **`agents/dev_agent.py` — chunk loop + fix flow**
+   Branch file fetches now use the correct `GitHubClient` per repo. Fix flow also fetches repo context before generating corrections.
+
+3. **`prompts/dev_plan.txt`**
+   Added: *"Use the same languages, frameworks, libraries already present. Reuse existing utilities, hooks, types — never duplicate them."*
+
+4. **`prompts/dev_implement_chunk.txt`**
+   Added `{repo_context}` section and rules: match imports/exports exactly, reuse existing utilities, preserve all existing code in modified files.
+
+5. **`agents/tech_lead_agent.py` + `prompts/tech_lead_review.txt` — missing file check**
+   Before each review, computes which BA-planned files are absent from the PR. Passes as `{missing_files}` — each missing file is an automatic blocker in the prompt. Catches silently skipped files like `HomePage.tsx` and `blogService.ts`.
+
+**Files changed:**
+- `agents/dev_agent.py` — `_fetch_repo_context()`, chunk loop, self-check, fix flow, `_fetch_branch_files_raw()` signature
+- `prompts/dev_plan.txt` — pattern-following instructions
+- `prompts/dev_implement_chunk.txt` — `{repo_context}` + convention rules
+- `prompts/dev_fix.txt` — `{repo_context}`
+- `agents/tech_lead_agent.py` — missing file detection, `missing_files` kwarg
+- `prompts/tech_lead_review.txt` — `{missing_files}` section + blocker instruction
+
+---
+
+### Problem — Multiple one-off fixes to live repos (wrong annotations, wrong security config, missing deps)
+
+**Symptoms caught post-merge:**
+- `BlogController.java` missing `@RestController`, `@GetMapping`, `@RequestParam` — plain Java class, not an HTTP endpoint
+- `BlogService.java` missing `@Service` — never registered with Spring, always returned empty list
+- `SecurityConfig.java` — `/api/blogs` not in `permitAll`, blocked by Spring Security with 401
+- `revelio-ui` — Java files (`BlogApiClient.java` etc.) committed to wrong repo
+- `BlogCard.tsx` — `default export` dropped by CR-12 dev agent overwrite
+- `date-fns` missing from `package.json`
+- Slf4j import wrong: `lombok.extern.Slf4j` → `lombok.extern.slf4j.Slf4j`
+
+**All fixed directly on `main` via GitHub API and squashed into single commits per repo following `CR-11 | fix(scope): description` pattern.**
+
+---
+
+### Problem — Jira config pointing at wrong project + wrong status names
+
+**Symptom:** `JIRA_PROJECT_KEY=KAN` but board is `CR`. Status names `In Review` / `Ready for Merge` don't exist — board has `QA` / `UAT`.
+
+**Fix:** Updated `.env`:
+- `JIRA_PROJECT_KEY=CR`
+- `JIRA_STATUS_IN_REVIEW=QA`
+- `JIRA_STATUS_READY_FOR_MERGE=UAT`
+
+---
+
+### Problem — `ai_client.py` returning raw unformatted template on any key error
+
+**Symptom:** Warning `"Prompt template key error (using partial sub): 'repo_structures'"` — when any placeholder was missing, the entire prompt was returned unformatted, so ALL substitutions failed.
+
+**Fix:** `ai_client.py` — replaced bare `return template` fallback with a `_SafeDict` that substitutes known keys and replaces unknown ones with empty string, so the rest of the prompt still renders correctly.
+
+---
+
+### Problem — Dev agent `StopIteration` crash when `target_repos` is empty
+
+**Symptom:** `BA analysis for CR-12 has no target_repos` — BA produced empty arrays due to malformed prompt. `next(iter(github_clients.values()))` raised `StopIteration`.
+
+**Fix:** `agents/dev_agent.py` — added explicit guard: raises `ValueError` with actionable message when `target_repos` is empty, telling the operator to reset the ticket for re-analysis.
+
+---
+
+### Problem — Tech Lead moving ticket to wrong Jira status + self-approval 422 error
+
+**Symptom 1:** Tech lead was transitioning tickets to `UAT` after approval, but the correct status is `In PR review` (new board column created for this). Human merges manually from `In PR review`.
+
+**Fix:** `.env` — `JIRA_STATUS_READY_FOR_MERGE=In PR review`
+
+**Symptom 2:** GitHub returned 422 `"Review Can not approve your own pull request"` on every approval because the same token creates the PR and tries to approve it. This was logged as ERROR and the pipeline continued, but no approval signal appeared on the PR.
+
+**Fix:** `agents/tech_lead_agent.py` — `_approve_repo()` now tries the formal GitHub approval first. If it gets 422 (self-review blocked), it falls back to posting a plain PR comment `✅ Tech Lead Approval` with the review summary and a note that the PR is ready for manual merge. Degrades gracefully with no ERROR in logs.
+
+**Files changed:**
+- `.env` — `JIRA_STATUS_READY_FOR_MERGE=In PR review`
+- `agents/tech_lead_agent.py` — `_approve_repo()` fallback to comment on 422

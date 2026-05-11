@@ -19,6 +19,7 @@ from typing import Any
 
 from ai_client import AIClient
 from config import Config
+from github_client import GitHubClient
 from jira_client import JiraClient
 from knowledge_loader import load_agent_knowledge
 from logger import get_logger
@@ -44,12 +45,14 @@ class BAAgent:
         ai: AIClient,
         jira: JiraClient,
         slack: SlackClient,
+        github: GitHubClient | None = None,
     ) -> None:
         self._config = config
         self._state = state
         self._ai = ai
         self._jira = jira
         self._slack = slack
+        self._github = github
 
     def run(self) -> list[str]:
         # Reload knowledge every cycle so live edits take effect immediately
@@ -136,6 +139,9 @@ class BAAgent:
             for key, entry in self._config.github_repos.items()
         )
 
+        # Fetch actual directory structure from each repo so the AI generates correct paths
+        repo_structures = self._fetch_repo_structures()
+
         analysis = self._ai.complete(
             "ba_analysis.txt",
             system_message=system_message,
@@ -145,6 +151,7 @@ class BAAgent:
             ticket_comments=comments or "(no comments)",
             ticket_labels=", ".join(labels) if labels else "(none)",
             available_repos=available_repos,
+            repo_structures=repo_structures,
         )
 
         if analysis.get("dry_run"):
@@ -320,6 +327,21 @@ class BAAgent:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _fetch_repo_structures(self) -> str:
+        """Fetch the directory tree for each configured repo to give the AI real path context."""
+        if not self._github:
+            return "(repo structures unavailable — no GitHub client)"
+        parts: list[str] = []
+        for key, entry in self._config.github_repos.items():
+            try:
+                gh = self._github.for_repo(entry["repo"])
+                structure = gh.get_repo_structure(max_depth=2)
+                parts.append(f"[{key}]\n{structure}")
+            except Exception as exc:
+                log.warning("Could not fetch structure for %s: %s", key, exc)
+                parts.append(f"[{key}]\n(could not fetch — {exc})")
+        return "\n\n".join(parts)
 
     @staticmethod
     def _extract_description(raw: Any) -> str:

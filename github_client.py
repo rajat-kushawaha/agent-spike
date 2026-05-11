@@ -372,6 +372,32 @@ class GitHubClient:
             log.error("Failed to post review comment on PR #%d: %s", pr_number, exc)
             return False
 
+    def get_repo_structure(self, max_depth: int = 2) -> str:
+        """
+        Return a compact directory/file tree of the repo's main branch up to max_depth levels.
+        Used by the BA agent to generate accurate file paths.
+        """
+        lines: list[str] = [f"Repository: {self._repo_name}"]
+        try:
+            # Detect language from repo metadata
+            repo = self.repo
+            language = repo.language or "unknown"
+            lines.append(f"Primary language: {language}")
+
+            # Walk tree up to max_depth
+            tree = repo.get_git_tree(self._base_branch, recursive=True)
+            for item in tree.tree:
+                parts = item.path.split("/")
+                if len(parts) > max_depth:
+                    continue
+                indent = "  " * (len(parts) - 1)
+                icon = "/" if item.type == "tree" else ""
+                lines.append(f"{indent}{parts[-1]}{icon}")
+        except GithubException as exc:
+            log.warning("Could not fetch repo structure for %s: %s", self._repo_name, exc)
+            lines.append("(could not fetch structure)")
+        return "\n".join(lines)
+
     def test_connection(self) -> bool:
         """Return True if the token is valid and the repo is accessible."""
         try:

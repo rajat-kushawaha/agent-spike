@@ -160,6 +160,38 @@ class TechLeadAgent:
                 log.warning("No path→repo mapping for %s/%s — using PR diff", ticket_id, repo_key)
                 branch_files = gh.get_pr_diff_smart(pr_number)
 
+            # Check for files the BA plan required but the dev never submitted
+            planned_for_repo = [
+                entry["path"] for entry in ba_analysis.get("files_to_change", [])
+                if entry.get("repo") == repo_key and entry.get("path") and not entry["path"].startswith("UNKNOWN")
+            ]
+            submitted_for_repo = set(p for p in all_submitted if path_to_repo.get(p) == repo_key)
+            missing_files = [p for p in planned_for_repo if p not in submitted_for_repo]
+            missing_files_text = (
+                "\n".join(f"  - {p}" for p in missing_files)
+                if missing_files else "  (none — all planned files are present)"
+            )
+            if missing_files:
+                log.warning(
+                    "Tech lead: %d planned file(s) missing from %s/%s PR: %s",
+                    len(missing_files), ticket_id, repo_key, missing_files,
+                )
+
+            # Describe what this repo covers so the AI knows which ACs apply here
+            total_repos = len(pr_numbers)
+            if total_repos > 1:
+                other_repos = [k for k in pr_numbers if k != repo_key]
+                repo_context = (
+                    f"This PR is for the '{repo_key}' repository. "
+                    f"The ticket also has PRs in: {', '.join(other_repos)}. "
+                    f"Only evaluate acceptance criteria that relate to the code in '{repo_key}'. "
+                    f"Do NOT flag missing code that belongs to the other repositories."
+                )
+            else:
+                repo_context = (
+                    f"This PR is for the '{repo_key}' repository and covers the full ticket scope."
+                )
+
             review = self._ai.complete(
                 "tech_lead_review.txt",
                 system_message=system_message,
@@ -169,6 +201,8 @@ class TechLeadAgent:
                 pr_diff=branch_files,
                 ba_analysis=json.dumps(ba_analysis, indent=2),
                 prior_feedback=prior_feedback_text,
+                repo_context=repo_context,
+                missing_files=missing_files_text,
             )
 
             if review.get("dry_run"):
@@ -288,13 +322,19 @@ class TechLeadAgent:
         return review
 
     def _approve_repo(self, ticket_id: str, pr_number: int, review: dict[str, Any], gh: GitHubClient) -> None:
-        """Post an approval comment on one repo's PR. Final state update done in _finalise_approval."""
+        """Post an approval on one repo's PR, falling back to a comment if self-review is blocked."""
         summary = review.get("summary", "All criteria met.")
         log.info("Tech lead approving PR #%d for %s", pr_number, ticket_id)
-        try:
-            gh.approve_pull_request(pr_number, body=f"Approved by Tech Lead agent.\n\n{summary}")
-        except Exception as exc:
-            log.warning("GitHub approval failed for PR #%d: %s", pr_number, exc)
+        approved = gh.approve_pull_request(pr_number, body=f"✅ Approved by Tech Lead agent.\n\n{summary}")
+        if not approved:
+            # GitHub blocks self-approval (same token created the PR) — post a plain comment instead
+            log.info("Falling back to approval comment on PR #%d (self-review not allowed)", pr_number)
+            gh.post_review_comment(
+                pr_number,
+                f"✅ **Tech Lead Approval**\n\n{summary}\n\n"
+                f"_Formal GitHub approval skipped — PR was created by the same token. "
+                f"Ready for manual merge._"
+            )
 
     def _request_changes_repo(self, ticket_id: str, pr_number: int, review: dict[str, Any], gh: GitHubClient) -> None:
         """Post a changes-requested comment on one repo's PR."""

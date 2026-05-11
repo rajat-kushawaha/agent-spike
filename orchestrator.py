@@ -123,7 +123,7 @@ def main() -> int:
     slack = SlackClient(config, dry_run=args.dry_run)
     github = GitHubClient(config, dry_run=args.dry_run)
 
-    ba = BAAgent(config, state, ai, jira, slack)
+    ba = BAAgent(config, state, ai, jira, slack, github)
     dev = DevAgent(config, state, ai, jira, slack, github)
     tl = TechLeadAgent(config, state, ai, jira, slack, github)
 

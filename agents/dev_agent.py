@@ -116,7 +116,12 @@ class DevAgent:
         branch_name: str = ticket_id  # always use ticket ID as branch name
 
         # Resolve target repos
-        target_repo_keys: list[str] = ba_analysis.get("target_repos", ["default"])
+        target_repo_keys: list[str] = ba_analysis.get("target_repos") or []
+        if not target_repo_keys:
+            raise ValueError(
+                f"BA analysis for {ticket_id} has no target_repos — "
+                "BA agent may have produced an incomplete analysis. Reset to BACKLOG to re-analyse."
+            )
         github_clients: dict[str, Any] = {
             key: self._github.resolve_repo(key) for key in target_repo_keys
         }
@@ -127,6 +132,15 @@ class DevAgent:
         completed_chunks: int = task.get("completed_chunks", 0)
         all_committed_files: dict[str, str] = dict(task.get("submitted_files", {}))
 
+        # Always fetch repo context — used in planning and every chunk implementation
+        repo_context: dict[str, str] = self._fetch_repo_context(
+            ba_analysis.get("files_to_change", []), github_clients
+        )
+        # Combined context across all repos for prompts that don't split by repo
+        combined_context = "\n\n".join(
+            f"## [{key} repo]\n{ctx}" for key, ctx in repo_context.items()
+        )
+
         if saved_plan and completed_chunks > 0:
             log.info(
                 "Resuming %s from chunk %d/%d (restart recovery)",
@@ -135,16 +149,14 @@ class DevAgent:
             chunks = saved_plan.get("chunks", [])
             pr_title = saved_plan.get("pr_title", f"feat: {ticket_id}")
             pr_body = saved_plan.get("pr_body", "")
-            existing_files_text = ""
         else:
             # Step 1: plan chunks (fresh start)
-            existing_files_text = self._fetch_existing_files(ba_analysis.get("files_to_change", []))
             plan = self._ai.complete(
                 "dev_plan.txt",
                 system_message=system_message,
                 ticket_id=ticket_id,
                 ba_analysis=json.dumps(ba_analysis, indent=2),
-                existing_files=existing_files_text,
+                existing_files=combined_context,
                 ticket_id_lower=ticket_id.lower(),
             )
 
@@ -194,9 +206,16 @@ class DevAgent:
                 i, len(chunks), ticket_id, chunk_desc, len(acs_covered),
             )
 
-            current_branch_text = self._fetch_branch_files_raw(branch_name, list(all_committed_files.keys()))
-            if not current_branch_text and existing_files_text:
-                current_branch_text = existing_files_text
+            # Files already committed on this branch for this chunk's repo
+            chunk_repo_key = chunk.get("repo_key", target_repo_keys[0])
+            repo_committed_paths = [
+                p for p in all_committed_files
+                if path_to_repo.get(p, target_repo_keys[0]) == chunk_repo_key
+            ]
+            current_branch_text = self._fetch_branch_files_raw(branch_name, repo_committed_paths, github_clients.get(chunk_repo_key, primary_gh))
+
+            # Repo context gives the AI the full picture: existing patterns + files to modify
+            this_repo_context = repo_context.get(chunk_repo_key, combined_context)
 
             chunk_result = self._ai.complete(
                 "dev_implement_chunk.txt",
@@ -206,7 +225,8 @@ class DevAgent:
                 chunk_description=chunk_desc,
                 acceptance_criteria_to_cover="\n".join(f"- {ac}" for ac in acs_covered),
                 all_acceptance_criteria="\n".join(f"- {ac}" for ac in acceptance_criteria),
-                current_files=current_branch_text or "(no files yet)",
+                current_files=current_branch_text or "(no files committed yet for this repo)",
+                repo_context=this_repo_context,
             )
 
             if chunk_result.get("dry_run"):
@@ -233,7 +253,14 @@ class DevAgent:
 
         # Step 3: self-check — are ALL acceptance criteria covered?
         log.info("Dev agent running self-check for %s", ticket_id)
-        final_branch_text = self._fetch_branch_files_raw(branch_name, list(all_committed_files.keys()))
+        # Fetch from every repo's branch for a complete picture
+        all_branch_parts: list[str] = []
+        for rkey, gh in github_clients.items():
+            repo_paths = [p for p in all_committed_files if path_to_repo.get(p, target_repo_keys[0]) == rkey]
+            text = self._fetch_branch_files_raw(branch_name, repo_paths, gh)
+            if text:
+                all_branch_parts.append(f"## [{rkey} repo]\n{text}")
+        final_branch_text = "\n\n".join(all_branch_parts)
 
         self_check = self._ai.complete(
             "dev_self_check.txt",
@@ -260,6 +287,7 @@ class DevAgent:
                 acceptance_criteria_to_cover=missing_text,
                 all_acceptance_criteria="\n".join(f"- {ac}" for ac in acceptance_criteria),
                 current_files=final_branch_text or "(no files yet)",
+                repo_context=combined_context,
             )
 
             if not remainder.get("dry_run"):
@@ -357,11 +385,30 @@ class DevAgent:
             )
         feedback_text = "\n".join(f"- {f}" for f in deduped_feedback)
 
-        # Use actual files on the branch (submitted_files), not BA's original file list
-        submitted_keys = list(task.get("submitted_files", {}).keys())
-        if not submitted_keys:
-            submitted_keys = [e.get("path", "") for e in ba_analysis.get("files_to_change", [])]
-        current_files = self._fetch_branch_files_raw(branch_name, submitted_keys)
+        # Fetch repo context so fixes match existing codebase patterns
+        fix_repo_context = self._fetch_repo_context(
+            ba_analysis.get("files_to_change", []), github_clients
+        )
+        fix_combined_context = "\n\n".join(
+            f"## [{key} repo]\n{ctx}" for key, ctx in fix_repo_context.items()
+        )
+
+        # Fetch actual files on the branch per repo
+        all_branch_parts: list[str] = []
+        for rkey, gh in github_clients.items():
+            submitted_keys = [
+                p for p in task.get("submitted_files", {})
+                if path_to_repo.get(p, target_repo_keys[0]) == rkey
+            ]
+            if not submitted_keys:
+                submitted_keys = [
+                    e.get("path", "") for e in ba_analysis.get("files_to_change", [])
+                    if e.get("repo") == rkey
+                ]
+            text = self._fetch_branch_files_raw(branch_name, submitted_keys, gh)
+            if text:
+                all_branch_parts.append(f"## [{rkey} repo]\n{text}")
+        current_files = "\n\n".join(all_branch_parts)
 
         result = self._ai.complete(
             "dev_fix.txt",
@@ -371,6 +418,7 @@ class DevAgent:
             submitted_files=current_files or "(no files found on branch)",
             review_feedback=feedback_text or "(no specific feedback provided)",
             branch_name=branch_name,
+            repo_context=fix_combined_context,
         )
 
         if result.get("dry_run"):
@@ -414,8 +462,96 @@ class DevAgent:
     # GitHub file fetching helpers
     # ------------------------------------------------------------------
 
-    def _fetch_branch_files_raw(self, branch_name: str, paths: list[str]) -> str:
+    def _fetch_repo_context(self, files_to_change: list[dict], github_clients: dict) -> dict[str, str]:
+        """
+        For each repo, fetch:
+        1. Current content of every planned file (from main — so AI sees what it's modifying)
+        2. Related files in the same directories (so AI sees naming/style conventions)
+        3. Key shared files: types, api client, hooks, app entry points
+
+        Returns {repo_key: formatted_context_string}
+        """
+        # Key shared files to always fetch per repo — these define the patterns the AI must follow
+        _SHARED_PATTERNS: dict[str, list[str]] = {
+            "ui": [
+                "src/types/api.ts",
+                "src/api/client.ts",
+                "src/api/endpoints.ts",
+                "src/hooks/useApi.ts",
+                "src/main.tsx",
+                "src/routes/__root.tsx",
+                "src/styles/_variables.scss",
+                "src/styles/_mixins.scss",
+            ],
+            "api": [
+                "src/main/java/com/revelio/api/config/SecurityConfig.java",
+                "src/main/java/com/revelio/api/dto/ApiResponse.java",
+                "src/main/java/com/revelio/api/controller/HealthController.java",
+                "src/main/java/com/revelio/api/service/HealthService.java",
+            ],
+        }
+
+        # Group planned files by repo
+        files_by_repo: dict[str, list[str]] = {}
+        for entry in files_to_change:
+            repo_key = entry.get("repo", "")
+            path = entry.get("path", "")
+            if repo_key and path:
+                files_by_repo.setdefault(repo_key, []).append(path)
+
+        result: dict[str, str] = {}
+        for repo_key, gh in github_clients.items():
+            parts: list[str] = []
+            fetched: set[str] = set()
+            base = self._config.github_base_branch
+
+            def _fetch_file(path: str, label: str = "") -> None:
+                if path in fetched:
+                    return
+                fetched.add(path)
+                try:
+                    contents = gh.repo.get_contents(path, ref=base)
+                    text = base64.b64decode(contents.content).decode("utf-8", errors="replace")  # type: ignore[union-attr]
+                    header = f"### {path}" + (f" ({label})" if label else "")
+                    parts.append(f"{header}\n```\n{text}\n```")
+                except Exception:
+                    if label == "planned":
+                        parts.append(f"### {path}\n(new file — does not exist yet on main)")
+
+            # 1. Shared pattern files for this repo
+            for shared_path in _SHARED_PATTERNS.get(repo_key, []):
+                _fetch_file(shared_path, "existing pattern — follow this style")
+
+            # 2. Planned files (what already exists that the agent will modify)
+            for path in files_by_repo.get(repo_key, []):
+                _fetch_file(path, "planned")
+
+            # 3. Sibling files in the same directories as planned files (for naming/style context)
+            dirs_seen: set[str] = set()
+            for path in files_by_repo.get(repo_key, []):
+                dir_path = "/".join(path.split("/")[:-1])
+                if not dir_path or dir_path in dirs_seen:
+                    continue
+                dirs_seen.add(dir_path)
+                try:
+                    siblings = gh.repo.get_contents(dir_path, ref=base)
+                    for sibling in (siblings if isinstance(siblings, list) else [siblings]):
+                        if sibling.type == "file" and sibling.path not in fetched:
+                            _fetch_file(sibling.path, "sibling — follow this style")
+                except Exception:
+                    pass
+
+            result[repo_key] = "\n\n".join(parts) if parts else "(no existing context — this is a new codebase)"
+            log.info(
+                "Repo context for %s: %d file(s) fetched (%d chars)",
+                repo_key, len(fetched), len(result[repo_key]),
+            )
+
+        return result
+
+    def _fetch_branch_files_raw(self, branch_name: str, paths: list[str], gh: GitHubClient | None = None) -> str:
         """Fetch named files from a branch. Returns formatted string."""
+        repo = (gh or self._github).repo
         parts: list[str] = []
         seen: set[str] = set()
         for path in paths:
@@ -423,7 +559,7 @@ class DevAgent:
                 continue
             seen.add(path)
             try:
-                contents = self._github.repo.get_contents(path, ref=branch_name)
+                contents = repo.get_contents(path, ref=branch_name)
                 text = base64.b64decode(contents.content).decode("utf-8", errors="replace")  # type: ignore[union-attr]
                 parts.append(f"### {path}\n```\n{text}\n```")
             except Exception as exc:

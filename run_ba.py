@@ -18,6 +18,7 @@ import time
 from agents.ba_agent import BAAgent
 from ai_client import AIClient
 from config import load_config
+from github_client import GitHubClient
 from jira_client import JiraClient
 from logger import configure_root_logger, get_logger
 from slack_client import SlackClient
@@ -48,7 +49,8 @@ def main() -> int:
     ai = AIClient(config, dry_run=args.dry_run)
     jira = JiraClient(config, dry_run=args.dry_run)
     slack = SlackClient(config, dry_run=args.dry_run)
-    agent = BAAgent(config, state, ai, jira, slack)
+    github = GitHubClient(config, dry_run=args.dry_run)
+    agent = BAAgent(config, state, ai, jira, slack, github)
     state.recover_stuck_tasks()
     log.info("BA agent started (pid=%d, dry_run=%s, once=%s)", __import__("os").getpid(), args.dry_run, args.once)
 

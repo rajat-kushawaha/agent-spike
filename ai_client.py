@@ -49,8 +49,13 @@ class AIClient:
         try:
             return template.format_map(kwargs)
         except KeyError as exc:
-            log.warning("Prompt template key error (using partial sub): %s", exc)
-            return template
+            log.warning("Prompt template key error — missing kwarg %s, substituting empty string", exc)
+            # Partial substitution: replace known keys, leave unknown {placeholders} intact
+            class _SafeDict(dict):
+                def __missing__(self, key: str) -> str:
+                    log.warning("Prompt placeholder {%s} has no value — using empty string", key)
+                    return ""
+            return template.format_map(_SafeDict(kwargs))
 
     def complete(
         self,

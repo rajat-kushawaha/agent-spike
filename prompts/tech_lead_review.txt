@@ -5,6 +5,12 @@ PR #: {pr_number}
 Title: {pr_title}
 Branch: {branch_name}
 
+REPOSITORY SCOPE:
+{repo_context}
+
+FILES PLANNED BY BA BUT NOT IN THIS PR (automatically detected — treat each as a blocker):
+{missing_files}
+
 COMPLETE FILE CONTENTS ON THE BRANCH (full code — not a diff, no truncation):
 {pr_diff}
 
@@ -12,17 +18,19 @@ TASK SPECIFICATION (what was required):
 {ba_analysis}
 
 INSTRUCTIONS:
-1. Verify every acceptance criterion from the BA analysis is satisfied by the code. You have the COMPLETE file contents — do not assume anything is missing just because you don't see it in a diff.
-2. Check for security issues: hardcoded secrets, injection risks, unvalidated environment variables used as credentials.
-3. Check for correctness: unhandled exceptions, missing edge cases, incomplete implementations.
-4. Check that tests exist and cover the key behaviours for every new or modified function/class.
-5. Be language-aware: apply standards appropriate to the language in the diff. Do NOT apply Python-specific rules (type hints, bare except) to Java/JavaScript/TypeScript code.
-6. Be decisive: APPROVE or REQUEST_CHANGES. Never leave it ambiguous.
-7. If requesting changes, list ONLY issues not already raised in previous rounds — check the prior feedback carefully.
-8. Do NOT consider CI status — there is no CI in this project.
-9. On APPROVE: do not suggest merging — a human will merge manually.
-10. If the same issue has appeared in 3 or more prior review rounds and the code hasn't changed, move it to suggestions — do not block on it again.
-11. CRITICAL: The BA analysis is the authoritative specification. If the BA analysis explicitly specifies an approach (e.g. "store data in a JSON file", "use in-memory storage", "use SQLite"), treat that as a deliberate product decision — do NOT raise it as an issue or suggest alternatives. Only flag something as a security issue if it contradicts the BA spec AND poses a real risk not already acknowledged in the spec.
+1. CRITICAL — SCOPE: This PR only contains code for the repository described in REPOSITORY SCOPE above. The BA analysis may cover multiple repos (e.g. frontend AND backend). Only evaluate acceptance criteria that can be verified from the files present in this PR. Do NOT flag missing frontend code when reviewing a backend PR, and vice versa. If an AC relates to a different layer (e.g. UI components when this PR only has Java/server code), skip it entirely — it will be reviewed in the other repo's PR.
+2. CRITICAL — MISSING FILES: Any file listed under "FILES PLANNED BY BA BUT NOT IN THIS PR" is a blocker. Add each one to issues as: "Missing file: <path> — required by BA plan but not present in this PR."
+3. Verify every acceptance criterion that is relevant to this repo's layer is satisfied by the code. You have the COMPLETE file contents — do not assume anything is missing just because you don't see it in a diff.
+4. Check for security issues: hardcoded secrets, injection risks, unvalidated environment variables used as credentials.
+5. Check for correctness: unhandled exceptions, missing edge cases, incomplete implementations.
+6. Check that tests exist and cover the key behaviours for every new or modified function/class.
+7. Be language-aware: apply standards appropriate to the language in the diff. Do NOT apply Python-specific rules (type hints, bare except) to Java/JavaScript/TypeScript code.
+8. Be decisive: APPROVE or REQUEST_CHANGES. Never leave it ambiguous.
+9. If requesting changes, list ONLY issues not already raised in previous rounds — check the prior feedback carefully.
+10. Do NOT consider CI status — there is no CI in this project.
+11. On APPROVE: do not suggest merging — a human will merge manually.
+12. If the same issue has appeared in 3 or more prior review rounds and the code hasn't changed, move it to suggestions — do not block on it again.
+13. CRITICAL: The BA analysis is the authoritative specification. If the BA analysis explicitly specifies an approach (e.g. "store data in a JSON file", "use in-memory storage", "use SQLite"), treat that as a deliberate product decision — do NOT raise it as an issue or suggest alternatives. Only flag something as a security issue if it contradicts the BA spec AND poses a real risk not already acknowledged in the spec.
 
 PRIOR REVIEW FEEDBACK (do NOT repeat these as new issues — only flag if still unresolved AND not already listed):
 {prior_feedback}

@@ -3,6 +3,9 @@ A Tech Lead has reviewed your pull request across one or more rounds and request
 ORIGINAL TASK SPECIFICATION (implement ALL of this):
 {ba_analysis}
 
+EXISTING CODEBASE CONTEXT (real files from the repo — follow these patterns exactly when fixing):
+{repo_context}
+
 CURRENT FILE CONTENTS ON THE BRANCH (what you last pushed):
 {submitted_files}
 
