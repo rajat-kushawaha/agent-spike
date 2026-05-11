@@ -433,9 +433,15 @@ class BAAgent:
         for c in analysis.get("acceptance_criteria", []):
             lines.append(f"  - {c}")
 
-        lines.append("\nFiles to Change:")
-        for f in analysis.get("files_to_change", []):
-            lines.append(f"  - {f['path']}: {f['reason']}")
+        if analysis.get("files_to_change"):
+            lines.append("\nFiles to Change:")
+            for f in analysis.get("files_to_change", []):
+                lines.append(f"  - {f['path']}: {f['reason']}")
+
+        if analysis.get("repo_changes"):
+            lines.append("\nRepo Changes:")
+            for repo, desc in analysis["repo_changes"].items():
+                lines.append(f"  [{repo}] {desc}")
 
         if analysis.get("function_signatures"):
             lines.append("\nFunction Signatures:")
