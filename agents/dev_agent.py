@@ -22,6 +22,7 @@ import json
 import re
 from typing import Any
 
+import console as ui
 from ai_client import AIClient
 from config import Config
 from github_client import GitHubClient
@@ -87,6 +88,7 @@ class DevAgent:
                 fresh_status = fresh_task.get("status")
                 if fresh_status not in _TRIGGER_STATUSES:
                     log.debug("Dev skipping %s — status changed to %s after lock acquired", task_id, fresh_status)
+                    ui.dev_skipped(task_id, f"status changed to {fresh_status}")
                     continue
                 if fresh_status in ("CHANGES_REQUESTED", "FIX_PENDING"):
                     self._fix(fresh_task, system_message)
@@ -95,6 +97,7 @@ class DevAgent:
                 processed.append(task_id)
             except Exception as exc:
                 log.error("Dev agent failed on %s: %s", task_id, exc, exc_info=True)
+                ui.task_failed(task_id, "Dev", exc)
                 self._state.upsert_task(task_id, {"status": "FAILED", "error": str(exc)})
             finally:
                 self._state.release_task(task_id)
@@ -110,6 +113,7 @@ class DevAgent:
         acceptance_criteria: list[str] = ba_analysis.get("acceptance_criteria", [])
 
         log.info("Dev agent implementing %s (%d ACs)", ticket_id, len(acceptance_criteria))
+        ui.dev_planning(ticket_id)
         self._state.set_status(ticket_id, "IN_DEVELOPMENT")
 
         branch_name: str = ticket_id  # always use ticket ID as branch name
@@ -204,9 +208,10 @@ class DevAgent:
                 "Dev implementing chunk %d/%d for %s: %s (covers %d AC(s))",
                 i, len(chunks), ticket_id, chunk_desc, len(acs_covered),
             )
+            chunk_repo_key = chunk.get("repo_key", target_repo_keys[0])
+            ui.dev_chunk(ticket_id, i, len(chunks), chunk_desc, chunk_repo_key)
 
             # Files already committed on this branch for this chunk's repo
-            chunk_repo_key = chunk.get("repo_key", target_repo_keys[0])
             repo_committed_paths = [
                 p for p in all_committed_files
                 if path_to_repo.get(p, target_repo_keys[0]) == chunk_repo_key
@@ -249,9 +254,11 @@ class DevAgent:
                 "submitted_files": all_committed_files,
             })
             log.info("Committed chunk %d for %s to %s: %s", i, ticket_id, gh.repo.full_name, list(files.keys()))
+            ui.dev_committed(ticket_id, i, len(chunks), repo_key, list(files.keys()))
 
         # Step 3: self-check — are ALL acceptance criteria covered?
         log.info("Dev agent running self-check for %s", ticket_id)
+        ui.dev_self_check(ticket_id)
         # Fetch from every repo's branch for a complete picture
         all_branch_parts: list[str] = []
         for rkey, gh in github_clients.items():
@@ -275,6 +282,7 @@ class DevAgent:
                 "Self-check: %d AC(s) still missing for %s — implementing remainder",
                 len(missing), ticket_id,
             )
+            ui.dev_self_check_gap(ticket_id, len(missing))
             missing_text = "\n".join(f"- {m}" for m in missing)
 
             remainder = self._ai.complete(
@@ -330,6 +338,7 @@ class DevAgent:
         )
 
         pr_summary = ", ".join(f"#{n} ({k})" for k, n in pr_numbers.items())
+        ui.dev_pr_raised(ticket_id, pr_summary)
         try:
             self._slack.post_task_update(
                 ticket_id, "Dev", f"PRs raised for {ticket_id}: {pr_summary} — all ACs implemented"
@@ -352,6 +361,7 @@ class DevAgent:
             "Dev agent fixing %s — %d accumulated feedback item(s)",
             ticket_id, len(review_feedback),
         )
+        ui.dev_fixing(ticket_id, len(review_feedback))
         self._state.set_status(ticket_id, "IN_DEVELOPMENT")
 
         # Resolve repo clients (same as _implement)
@@ -440,6 +450,7 @@ class DevAgent:
             gh.create_branch(branch_name)  # no-op if exists
             gh.commit_files(branch_name, repo_files, commit_msg)
             log.info("Fix committed for %s to %s: %s", ticket_id, gh.repo.full_name, list(repo_files.keys()))
+            ui.dev_fix_committed(ticket_id, repo_key)
 
         self._state.upsert_task(
             ticket_id,

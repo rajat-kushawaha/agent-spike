@@ -13,9 +13,11 @@ Options:
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 import time
 
+import console as ui
 from agents.ba_agent import BAAgent
 from agents.dev_agent import DevAgent
 from agents.tech_lead_agent import TechLeadAgent
@@ -29,33 +31,21 @@ from state_manager import StateManager
 
 log = get_logger(__name__)
 
+_cycle = 0
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Multi-agent software development workflow orchestrator"
     )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Log external API calls without executing them",
-    )
-    parser.add_argument(
-        "--only-agent",
-        choices=["ba", "dev", "tech_lead"],
-        default=None,
-        help="Run only one agent per cycle for phased testing",
-    )
-    parser.add_argument(
-        "--once",
-        action="store_true",
-        help="Run a single cycle and exit instead of looping forever",
-    )
-    parser.add_argument(
-        "--log-level",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        default="INFO",
-        help="Logging verbosity level",
-    )
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Log external API calls without executing them")
+    parser.add_argument("--only-agent", choices=["ba", "dev", "tech_lead"], default=None,
+                        help="Run only one agent per cycle for phased testing")
+    parser.add_argument("--once", action="store_true",
+                        help="Run a single cycle and exit instead of looping forever")
+    parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+                        default="INFO", help="Logging verbosity level")
     return parser.parse_args()
 
 
@@ -73,42 +63,39 @@ def run_cycle(
     full push time to land on GitHub and prevents the Tech Lead from reviewing
     a stale diff or re-reviewing work it already saw.
     """
-    if dry_run:
-        log.info("[DRY-RUN] cycle starting — no external mutations will occur")
+    global _cycle
+    _cycle += 1
+    ui.cycle_start(_cycle)
 
     if only_agent is None or only_agent == "ba":
-        log.info("Running BA agent...")
-        processed = ba.run()
-        if processed:
-            log.info("BA agent processed: %s", processed)
+        ui.agent_start("BA Agent")
+        ba.run()
 
     just_pushed: set[str] = set()
     if only_agent is None or only_agent == "dev":
-        log.info("Running Developer agent...")
+        ui.agent_start("Dev Agent")
         processed = dev.run()
-        if processed:
-            log.info("Dev agent processed: %s", processed)
-            just_pushed = set(processed)
+        just_pushed = set(processed)
 
     if only_agent is None or only_agent == "tech_lead":
-        log.info("Running Tech Lead agent...")
-        processed = tl.run(skip_tickets=just_pushed)
-        if processed:
-            log.info("Tech Lead agent processed: %s", processed)
+        ui.agent_start("Tech Lead")
+        tl.run(skip_tickets=just_pushed)
 
 
 def main() -> int:
     args = parse_args()
-
-    import logging
     log_level = getattr(logging, args.log_level)
     configure_root_logger(level=log_level)
 
-    log.info(
-        "Starting orchestrator (dry_run=%s, only_agent=%s)",
-        args.dry_run,
-        args.only_agent,
-    )
+    from rich.panel import Panel
+    from console import console
+    console.print(Panel(
+        "[bold white]Agent Spike — AI Engineering Pipeline[/bold white]\n"
+        f"[dim]model: anthropic/claude-sonnet-4-5  ·  dry_run={args.dry_run}"
+        + (f"  ·  agent={args.only_agent}" if args.only_agent else "") + "[/dim]",
+        border_style="white",
+        padding=(0, 2),
+    ))
 
     try:
         config = load_config()
@@ -116,7 +103,6 @@ def main() -> int:
         log.error("Configuration error: %s", exc)
         return 1
 
-    # Build shared dependencies once
     state = StateManager(config.state_file)
     ai = AIClient(config, dry_run=args.dry_run)
     jira = JiraClient(config, dry_run=args.dry_run)
@@ -131,25 +117,21 @@ def main() -> int:
         run_cycle(ba, dev, tl, args.only_agent, args.dry_run)
         return 0
 
-    log.info(
-        "Entering poll loop (interval=%ds) — Ctrl+C to stop",
-        config.poll_interval_seconds,
-    )
     while True:
         try:
             run_cycle(ba, dev, tl, args.only_agent, args.dry_run)
         except KeyboardInterrupt:
-            log.info("Orchestrator stopped by user")
+            console.print("\n[dim]Orchestrator stopped.[/dim]")
             return 0
         except Exception as exc:
-            # Never let an unhandled exception kill the loop — log and continue
-            log.error("Unexpected error in orchestration cycle: %s", exc, exc_info=True)
+            ui.orchestrator_error(exc)
+            log.error("Cycle error", exc_info=True)
 
-        log.info("Sleeping %ds until next cycle...", config.poll_interval_seconds)
+        ui.cycle_sleep(config.poll_interval_seconds)
         try:
             time.sleep(config.poll_interval_seconds)
         except KeyboardInterrupt:
-            log.info("Orchestrator stopped during sleep")
+            console.print("\n[dim]Orchestrator stopped.[/dim]")
             return 0
 
     return 0

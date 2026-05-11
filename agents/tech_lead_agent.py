@@ -17,6 +17,7 @@ import json
 import re
 from typing import Any
 
+import console as ui
 from ai_client import AIClient
 from config import Config
 from github_client import GitHubClient
@@ -72,6 +73,7 @@ class TechLeadAgent:
                 processed.append(task_id)
             except Exception as exc:
                 log.error("Tech lead agent failed on %s: %s", task_id, exc, exc_info=True)
+                ui.task_failed(task_id, "TL", exc)
                 self._state.upsert_task(task_id, {"status": "FAILED", "error": str(exc)})
             finally:
                 self._state.release_task(task_id)
@@ -132,6 +134,7 @@ class TechLeadAgent:
                     "Tech lead skipping %s/%s — no new commits since last review (sha=%s)",
                     ticket_id, repo_key, current_sha[:8],
                 )
+                ui.tl_skipped_no_new_commits(ticket_id, repo_key)
                 all_decisions.append("CHANGES_REQUESTED")  # treat as still pending
                 continue
 
@@ -139,6 +142,7 @@ class TechLeadAgent:
                 "Tech lead reviewing PR #%d (%s) for %s (sha=%s)",
                 pr_number, repo_key, ticket_id, (current_sha or "unknown")[:8],
             )
+            ui.tl_reviewing(ticket_id, pr_number, repo_key)
 
             # Record SHA before calling AI — prevents duplicate reviews if this takes time
             last_reviewed_shas[repo_key] = current_sha
@@ -161,7 +165,7 @@ class TechLeadAgent:
                 branch_files = gh.get_pr_diff_smart(pr_number)
 
             # Check for files the BA plan required but the dev never submitted
-            planned_for_repo = [
+            planned_for_repo: list[str] = [
                 entry["path"] for entry in ba_analysis.get("files_to_change", [])
                 if entry.get("repo") == repo_key and entry.get("path") and not entry["path"].startswith("UNKNOWN")
             ]
@@ -176,6 +180,7 @@ class TechLeadAgent:
                     "Tech lead: %d planned file(s) missing from %s/%s PR: %s",
                     len(missing_files), ticket_id, repo_key, missing_files,
                 )
+                ui.tl_missing_files(ticket_id, repo_key, missing_files)
 
             # Describe what this repo covers so the AI knows which ACs apply here
             total_repos = len(pr_numbers)
@@ -223,14 +228,20 @@ class TechLeadAgent:
             all_decisions.append(decision)
 
             if decision == "APPROVE":
+                ui.tl_approved(ticket_id, pr_number, repo_key)
                 self._approve_repo(ticket_id, pr_number, review, gh)
             else:
+                issues = review.get("issues", [])
+                ui.tl_changes(ticket_id, pr_number, repo_key, len(issues))
+                for issue in issues[:5]:  # show up to 5 issues in the live output
+                    ui.tl_issue(issue)
                 self._request_changes_repo(ticket_id, pr_number, review, gh)
                 repos_needing_changes.append(repo_key)
-                all_new_issues.extend(review.get("issues", []))
+                all_new_issues.extend(issues)
 
         # Final status: only APPROVE the ticket when ALL repos approved
         if all(d == "APPROVE" for d in all_decisions):
+            ui.tl_all_approved(ticket_id)
             self._finalise_approval(ticket_id, pr_numbers, prior_issues, all_decisions)
         else:
             self._finalise_changes_requested(ticket_id, all_new_issues, prior_issues, task)

@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import console as ui
 from ai_client import AIClient
 from config import Config
 from github_client import GitHubClient
@@ -92,11 +93,13 @@ class BAAgent:
 
             if current_status in _BA_DONE_STATUSES or current_status == "BA_AWAITING_CLARIFICATION":
                 log.debug("Skipping %s (status=%s)", ticket_id, current_status)
+                ui.ba_skipped(ticket_id, f"already {current_status}")
                 continue
 
             # Skip if already analysed — ba_analysis in state means BA work is done
             if self._state.get_task(ticket_id) and self._state.get_task(ticket_id).get("ba_analysis"):
                 log.debug("Skipping %s — already has ba_analysis in state", ticket_id)
+                ui.ba_skipped(ticket_id, "already analysed")
                 continue
 
             if not self._state.claim_task(ticket_id, "ba_agent"):
@@ -106,6 +109,7 @@ class BAAgent:
                 processed.append(ticket_id)
             except Exception as exc:
                 log.error("BA agent failed on %s: %s", ticket_id, exc, exc_info=True)
+                ui.task_failed(ticket_id, "BA", exc)
                 self._state.upsert_task(ticket_id, {"status": "FAILED", "error": str(exc)})
             finally:
                 self._state.release_task(ticket_id)
@@ -125,6 +129,7 @@ class BAAgent:
         labels: list[str] = fields.get("labels", [])
 
         log.info("BA agent analysing %s: %s", ticket_id, summary)
+        ui.ba_analysing(ticket_id, summary)
         self._state.upsert_task(
             ticket_id,
             {
@@ -178,6 +183,7 @@ class BAAgent:
             ticket_id,
             len(questions),
         )
+        ui.ba_clarification(ticket_id, len(questions))
 
         thread_ts = self._slack.post_clarification_request(ticket_id, summary, questions)
 
@@ -234,6 +240,7 @@ class BAAgent:
             log.info(
                 "No replies yet in Slack thread for %s — will check again next cycle", ticket_id
             )
+            ui.ba_waiting(ticket_id)
             return False
 
         # Collect all reply texts as the human's answers
@@ -312,6 +319,7 @@ class BAAgent:
             },
         )
 
+        ui.ba_done(ticket_id, analysis.get("complexity", "unknown"))
         try:
             self._slack.post_task_update(
                 ticket_id,

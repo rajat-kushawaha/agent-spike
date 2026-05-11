@@ -8,9 +8,8 @@ from __future__ import annotations
 import logging
 import sys
 
-
 _FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
+_DATE_FORMAT = "%H:%M:%S"
 _root_configured = False
 
 
@@ -19,11 +18,25 @@ def configure_root_logger(level: int = logging.INFO) -> None:
     global _root_configured
     if _root_configured:
         return
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(logging.Formatter(_FORMAT, datefmt=_DATE_FORMAT))
+
+    from console import RichLoggingHandler
+
     root = logging.getLogger()
     root.setLevel(level)
-    root.addHandler(handler)
+
+    # Rich handler for WARNING+ (coloured, via rich console)
+    rich_handler = RichLoggingHandler()
+    rich_handler.setLevel(logging.WARNING)
+    rich_handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
+    root.addHandler(rich_handler)
+
+    # Plain stdout handler for DEBUG (only active when level=DEBUG)
+    if level <= logging.DEBUG:
+        plain = logging.StreamHandler(sys.stdout)
+        plain.setLevel(logging.DEBUG)
+        plain.setFormatter(logging.Formatter(_FORMAT, datefmt=_DATE_FORMAT))
+        root.addHandler(plain)
+
     _root_configured = True
 
 
