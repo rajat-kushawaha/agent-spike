@@ -25,8 +25,16 @@ INSTRUCTIONS:
 5. Set "target_repos" to the list of repo keys that need changes (derived from step 3).
 6. Specify exact function signatures with type hints.
 7. Identify edge cases the developer must handle explicitly.
-8. If ANY information is ambiguous or missing, set "needs_clarification" to true and list your questions.
-9. Estimate complexity: "low" (< 2h), "medium" (2–8h), "high" (> 8h).
+8. Estimate complexity: "low" (< 2h), "medium" (2–8h), "high" (> 8h).
+9. CLARIFICATION RULES — only ask if you genuinely cannot proceed without the answer:
+   - NEVER ask about things visible in the repo structure (component names, file locations, existing patterns).
+   - NEVER ask about conventions already established in the codebase (naming, styling, data patterns) — infer them.
+   - NEVER ask about position/ordering of new items — default to appending at the end unless the ticket says otherwise.
+   - NEVER ask whether to reuse existing components — always reuse what already exists.
+   - NEVER ask about fields not mentioned in the ticket — use only what the ticket specifies.
+   - ONLY ask when a specific value is required that is not in the ticket and cannot be inferred (e.g. an exact hex colour, a specific external URL, a third-party API key).
+   - If the ticket says "update X" without a value AND there is no sensible default, ask ONE focused question for that value.
+   - Aim for zero clarification questions. One is acceptable. More than two is a failure.
 
 OUTPUT FORMAT:
 Respond with a single JSON object only. No text outside the JSON.
