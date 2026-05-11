@@ -1,12 +1,6 @@
 """
 run_tech_lead.py - Standalone Tech Lead agent runner.
 
-Polls every POLL_INTERVAL_SECONDS for PRs ready to review.
-The skip_tickets mechanism from the orchestrator does not apply here —
-instead the SHA-based dedup in the Tech Lead agent prevents re-reviewing
-the same commit. Run one instance; running multiple would waste API credits
-since each would review the same PR.
-
 Usage:
   python run_tech_lead.py [--once] [--dry-run] [--log-level DEBUG|INFO|WARNING]
 """
@@ -18,6 +12,7 @@ import os
 import sys
 import time
 
+import console as ui
 from agents.tech_lead_agent import TechLeadAgent
 from ai_client import AIClient
 from config import load_config
@@ -28,6 +23,9 @@ from slack_client import SlackClient
 from state_manager import StateManager
 
 log = get_logger(__name__)
+
+_LABEL = "Tech Lead"
+_STYLE = "tl"
 
 
 def parse_args() -> argparse.Namespace:
@@ -55,27 +53,36 @@ def main() -> int:
     github = GitHubClient(config, dry_run=args.dry_run)
     agent = TechLeadAgent(config, state, ai, jira, slack, github)
     state.recover_stuck_tasks()
-    log.info("Tech Lead agent started (pid=%d, dry_run=%s, once=%s)", os.getpid(), args.dry_run, args.once)
 
+    ui.startup(_LABEL, config.openai_model, os.getpid(), args.dry_run, config.poll_interval_seconds)
+
+    cycle = 0
     if args.once:
+        cycle += 1
+        ui.agent_cycle_start(_LABEL, _STYLE, cycle)
+        ui.agent_polling(_LABEL, _STYLE)
         agent.run()
         return 0
 
     while True:
+        cycle += 1
+        ui.agent_cycle_start(_LABEL, _STYLE, cycle)
+        ui.agent_polling(_LABEL, _STYLE)
         try:
             processed = agent.run()
-            if processed:
-                log.info("Tech Lead agent processed: %s", processed)
+            if not processed:
+                ui.agent_nothing_to_do(_LABEL, _STYLE)
         except KeyboardInterrupt:
-            log.info("Tech Lead agent stopped")
+            ui.console.print("\n[dim]Tech Lead stopped.[/dim]")
             return 0
         except Exception as exc:
             log.error("Unexpected error in Tech Lead cycle: %s", exc, exc_info=True)
 
+        ui.agent_idle(_LABEL, config.poll_interval_seconds)
         try:
             time.sleep(config.poll_interval_seconds)
         except KeyboardInterrupt:
-            log.info("Tech Lead agent stopped")
+            ui.console.print("\n[dim]Tech Lead stopped.[/dim]")
             return 0
 
     return 0

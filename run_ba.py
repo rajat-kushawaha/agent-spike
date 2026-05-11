@@ -1,10 +1,6 @@
 """
 run_ba.py - Standalone BA agent runner.
 
-Polls every POLL_INTERVAL_SECONDS for Backlog tickets and clarification replies.
-Multiple instances can run in parallel — distributed locking ensures no two
-instances process the same ticket simultaneously.
-
 Usage:
   python run_ba.py [--once] [--dry-run] [--log-level DEBUG|INFO|WARNING]
 """
@@ -12,9 +8,11 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import time
 
+import console as ui
 from agents.ba_agent import BAAgent
 from ai_client import AIClient
 from config import load_config
@@ -25,6 +23,9 @@ from slack_client import SlackClient
 from state_manager import StateManager
 
 log = get_logger(__name__)
+
+_LABEL = "BA Agent"
+_STYLE = "ba"
 
 
 def parse_args() -> argparse.Namespace:
@@ -52,27 +53,36 @@ def main() -> int:
     github = GitHubClient(config, dry_run=args.dry_run)
     agent = BAAgent(config, state, ai, jira, slack, github)
     state.recover_stuck_tasks()
-    log.info("BA agent started (pid=%d, dry_run=%s, once=%s)", __import__("os").getpid(), args.dry_run, args.once)
 
+    ui.startup(_LABEL, config.openai_model, os.getpid(), args.dry_run, config.poll_interval_seconds)
+
+    cycle = 0
     if args.once:
+        cycle += 1
+        ui.agent_cycle_start(_LABEL, _STYLE, cycle)
+        ui.agent_polling(_LABEL, _STYLE)
         agent.run()
         return 0
 
     while True:
+        cycle += 1
+        ui.agent_cycle_start(_LABEL, _STYLE, cycle)
+        ui.agent_polling(_LABEL, _STYLE)
         try:
             processed = agent.run()
-            if processed:
-                log.info("BA agent processed: %s", processed)
+            if not processed:
+                ui.agent_nothing_to_do(_LABEL, _STYLE)
         except KeyboardInterrupt:
-            log.info("BA agent stopped")
+            ui.console.print("\n[dim]BA agent stopped.[/dim]")
             return 0
         except Exception as exc:
             log.error("Unexpected error in BA cycle: %s", exc, exc_info=True)
 
+        ui.agent_idle(_LABEL, config.poll_interval_seconds)
         try:
             time.sleep(config.poll_interval_seconds)
         except KeyboardInterrupt:
-            log.info("BA agent stopped")
+            ui.console.print("\n[dim]BA agent stopped.[/dim]")
             return 0
 
     return 0

@@ -1,10 +1,6 @@
 """
 run_dev.py - Standalone Developer agent runner.
 
-Polls every POLL_INTERVAL_SECONDS for tickets ready for implementation or fixes.
-Multiple instances can run in parallel — each will pick up a different ticket
-thanks to distributed locking.
-
 Usage:
   python run_dev.py [--once] [--dry-run] [--log-level DEBUG|INFO|WARNING]
 """
@@ -16,6 +12,7 @@ import os
 import sys
 import time
 
+import console as ui
 from agents.dev_agent import DevAgent
 from ai_client import AIClient
 from config import load_config
@@ -26,6 +23,9 @@ from slack_client import SlackClient
 from state_manager import StateManager
 
 log = get_logger(__name__)
+
+_LABEL = "Dev Agent"
+_STYLE = "dev"
 
 
 def parse_args() -> argparse.Namespace:
@@ -53,27 +53,36 @@ def main() -> int:
     github = GitHubClient(config, dry_run=args.dry_run)
     agent = DevAgent(config, state, ai, jira, slack, github)
     state.recover_stuck_tasks()
-    log.info("Dev agent started (pid=%d, dry_run=%s, once=%s)", os.getpid(), args.dry_run, args.once)
 
+    ui.startup(_LABEL, config.openai_model, os.getpid(), args.dry_run, config.poll_interval_seconds)
+
+    cycle = 0
     if args.once:
+        cycle += 1
+        ui.agent_cycle_start(_LABEL, _STYLE, cycle)
+        ui.agent_polling(_LABEL, _STYLE)
         agent.run()
         return 0
 
     while True:
+        cycle += 1
+        ui.agent_cycle_start(_LABEL, _STYLE, cycle)
+        ui.agent_polling(_LABEL, _STYLE)
         try:
             processed = agent.run()
-            if processed:
-                log.info("Dev agent processed: %s", processed)
+            if not processed:
+                ui.agent_nothing_to_do(_LABEL, _STYLE)
         except KeyboardInterrupt:
-            log.info("Dev agent stopped")
+            ui.console.print("\n[dim]Dev agent stopped.[/dim]")
             return 0
         except Exception as exc:
             log.error("Unexpected error in Dev cycle: %s", exc, exc_info=True)
 
+        ui.agent_idle(_LABEL, config.poll_interval_seconds)
         try:
             time.sleep(config.poll_interval_seconds)
         except KeyboardInterrupt:
-            log.info("Dev agent stopped")
+            ui.console.print("\n[dim]Dev agent stopped.[/dim]")
             return 0
 
     return 0

@@ -75,6 +75,19 @@ def _icon(name: str) -> str:
     return _ICONS.get(name, "•")
 
 
+# ── Startup banners (one per runner) ─────────────────────────────────────────
+
+def startup(agent_label: str, model: str, pid: int, dry_run: bool, poll_seconds: int) -> None:
+    from rich.panel import Panel
+    flags = "[yellow]DRY-RUN[/yellow]  " if dry_run else ""
+    console.print(Panel(
+        f"[bold white]{agent_label}[/bold white]\n"
+        f"{flags}[dim]model: {model}  ·  pid: {pid}  ·  poll: {poll_seconds}s[/dim]",
+        border_style="white",
+        padding=(0, 2),
+    ))
+
+
 # ── Cycle / orchestrator ─────────────────────────────────────────────────────
 
 def cycle_start(cycle: int) -> None:
@@ -88,6 +101,25 @@ def cycle_sleep(seconds: int) -> None:
 
 def orchestrator_error(exc: Exception) -> None:
     console.print(f"  [{_ts()}] [err]{_icon('fail')} Orchestrator error:[/err] {exc}")
+
+
+# ── Agent-runner cycle helpers ────────────────────────────────────────────────
+
+def agent_cycle_start(label: str, style: str, cycle: int) -> None:
+    console.print()
+    console.rule(f"[{style}]{_icon('cycle')} {label} · Cycle {cycle}  ·  {_ts()}[/{style}]", style="dim white")
+
+
+def agent_polling(label: str, style: str) -> None:
+    console.print(f"  [dim]{_ts()}  {_icon('think')} [{style}]{label}[/{style}] scanning Jira for tickets…[/dim]")
+
+
+def agent_nothing_to_do(label: str, style: str) -> None:
+    console.print(f"  [dim]{_ts()}  {label} — nothing to action this cycle[/dim]")
+
+
+def agent_idle(label: str, seconds: int) -> None:
+    console.print(f"  [dim]sleeping {seconds}s…[/dim]")
 
 
 # ── Agent phase banners ───────────────────────────────────────────────────────
@@ -238,29 +270,46 @@ def warn(ticket_id: str, agent: str, msg: str) -> None:
     console.print(f"  {_ts()}  [warn]{_icon('warn')} {agent}[/warn]  [ticket]{ticket_id}[/ticket]  [warn]{msg[:100]}[/warn]")
 
 
-# ── Rich logging handler (replaces plain StreamHandler for INFO+) ─────────────
+# ── Rich logging handler — all levels, all modules ───────────────────────────
+
+_OWN_MODULES = {
+    "agents.ba_agent", "agents.dev_agent", "agents.tech_lead_agent",
+    "ba_agent", "dev_agent", "tech_lead_agent",
+    "orchestrator", "ai_client", "github_client",
+    "jira_client", "slack_client", "state_manager",
+    "knowledge_loader", "run_ba", "run_dev", "run_tech_lead",
+}
+
+_LEVEL_STYLE: dict[int, tuple[str, str]] = {
+    logging.DEBUG:    ("dim white",   "·"),
+    logging.INFO:     ("dim white",   "·"),
+    logging.WARNING:  ("bold yellow", "⚠"),
+    logging.ERROR:    ("bold red",    "✗"),
+    logging.CRITICAL: ("bold red",    "✗"),
+}
+
 
 class RichLoggingHandler(logging.Handler):
-    """
-    Routes WARNING and ERROR records from the standard logger to the rich console
-    so library warnings (PyGithub, requests, etc.) still appear but in colour.
-    DEBUG and INFO from our own code are handled by the console.* calls above —
-    this handler only catches things we didn't explicitly surface.
-    """
+    """Routes all log records to the Rich console with colour and level icons."""
 
     def emit(self, record: logging.LogRecord) -> None:
         msg = self.format(record)
-        # Only show library-level noise that isn't already surfaced by console.*
-        if record.name.startswith("agents.") or record.name in (
-            "ba_agent", "dev_agent", "tech_lead_agent",
-            "orchestrator", "ai_client", "github_client",
-            "jira_client", "slack_client", "state_manager",
-        ):
-            # Our own modules: only show WARNING and above (INFO handled by console.*)
+        ts = _ts()
+        style, icon = _LEVEL_STYLE.get(record.levelno, ("dim white", "·"))
+        is_own = record.name in _OWN_MODULES or record.name.startswith("agents.")
+
+        if is_own:
             if record.levelno >= logging.WARNING:
-                style = "err" if record.levelno >= logging.ERROR else "warn"
-                console.print(f"  [dim]{record.created:.0f}[/dim]  [{style}]{msg}[/{style}]")
+                console.print(f"  {ts}  [{style}]{icon} {msg}[/{style}]")
+            elif record.levelno == logging.INFO:
+                # INFO from our code: show as a dim step (console.* handles key events)
+                console.print(f"  [dim]{ts}  {icon} {msg}[/dim]")
+            else:
+                # DEBUG: show indented and very dim
+                console.print(f"    [dim]{msg}[/dim]")
         else:
-            # Third-party libraries: show WARNING+
+            # Third-party libraries (PyGithub, requests, openai, slack_sdk…)
             if record.levelno >= logging.WARNING:
-                console.print(f"  [dim]{msg}[/dim]")
+                console.print(f"  [{style}]{icon} [lib] {msg}[/{style}]")
+            elif record.levelno == logging.DEBUG:
+                console.print(f"    [dim][lib] {msg}[/dim]")
