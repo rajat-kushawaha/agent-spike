@@ -20,9 +20,10 @@ ACTUAL FILES IN EACH REPOSITORY (every path here is real — use these to unders
 INSTRUCTIONS:
 1. Identify the core functional requirement from all available fields — summary, description, comments, and labels.
 2. Break the requirement into discrete, testable acceptance criteria (Given/When/Then format). Each criterion must be independently verifiable.
-3. Determine which repos need changes. Read the file list carefully:
-   - If the ticket adds or changes DATA (a new record, entry, or content), look at which repo owns the data layer. If one repo has a service, controller, or model layer (e.g. BlogService.java, a database, a seed file), changes to stored data MUST go in that repo — not the UI.
-   - A UI repo that fetches data from an API does NOT own that data. Adding a new item served by the API requires changing the API repo.
+3. Determine which repos need changes. Read the file list carefully and make a DEFINITIVE decision — do not hedge or write "check if":
+   - If the ticket adds or changes DATA (a new record, entry, or content): look at the file list for both repos. If the UI repo has a service file that calls an API (e.g. blogService.ts making an HTTP GET call), the UI does NOT own the data — it comes from the API repo. The API repo MUST be in target_repos.
+   - If the UI repo has hardcoded data arrays or constants, the UI owns the data. But if it fetches from an HTTP endpoint, it does not.
+   - Read the evidence in the file list and commit to a decision. Never write "check if the data is fetched or hardcoded" — you have the file list; determine it from there.
    - Set "target_repos" to ALL repos that need changes. Missing a repo here means the developer will never touch it.
 4. For each target repo, describe what needs to change in plain English under "repo_changes". Do NOT list specific file paths — the developer will read the codebase and decide which files to touch. Describe the functional area and what needs to happen (e.g. "Add a new blog entry to the seed data layer in BlogService", "Update the page background colour in the blogs page styling").
 5. Use the file list to inform your understanding of the codebase (e.g. "the API uses Java Spring Boot with a BlogService", "the UI has a BlogCard component and fetches from the API") so your acceptance criteria and notes are accurate. But do not copy file paths into the output.

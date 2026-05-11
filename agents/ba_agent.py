@@ -337,7 +337,25 @@ class BAAgent:
     # ------------------------------------------------------------------
 
     def _fetch_repo_structures(self) -> str:
-        """Fetch the complete file list for each repo so the AI uses real paths, never guesses."""
+        """
+        For each repo fetch:
+        1. Complete flat file list (so BA knows what exists)
+        2. Content of key data-layer files (so BA can determine where data actually lives
+           rather than guessing from filenames alone)
+        """
+        import base64
+
+        # Files whose content reveals where data lives — read these in every repo
+        _DATA_LAYER_HINTS: dict[str, list[str]] = {
+            "ui": [
+                "src/api/services/blogService.ts",
+                "src/api/endpoints.ts",
+            ],
+            "api": [
+                "src/main/java/com/revelio/api/service/BlogService.java",
+            ],
+        }
+
         if not self._github:
             return "(repo file lists unavailable — no GitHub client)"
         parts: list[str] = []
@@ -345,7 +363,22 @@ class BAAgent:
             try:
                 gh = self._github.for_repo(entry["repo"])
                 file_list = gh.get_repo_file_list()
-                parts.append(f"[{key}]\n{file_list}")
+                section = f"[{key}]\n{file_list}"
+
+                # Append content of data-layer hint files so BA can see HOW data is served
+                hint_parts: list[str] = []
+                for hint_path in _DATA_LAYER_HINTS.get(key, []):
+                    try:
+                        contents = gh.repo.get_contents(hint_path, ref=self._config.github_base_branch)
+                        text = base64.b64decode(contents.content).decode("utf-8", errors="replace")  # type: ignore[union-attr]
+                        hint_parts.append(f"\n--- {hint_path} (content) ---\n{text}\n---")
+                    except Exception:
+                        pass
+
+                if hint_parts:
+                    section += "\n\nKey data-layer files (read to understand where data comes from):" + "".join(hint_parts)
+
+                parts.append(section)
             except Exception as exc:
                 log.warning("Could not fetch file list for %s: %s", key, exc)
                 parts.append(f"[{key}]\n(could not fetch — {exc})")
