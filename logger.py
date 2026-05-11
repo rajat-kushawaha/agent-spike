@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Optional
 
 
 _FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
@@ -28,7 +27,7 @@ def configure_root_logger(level: int = logging.INFO) -> None:
     _root_configured = True
 
 
-def get_logger(name: str, level: Optional[int] = None) -> logging.Logger:
+def get_logger(name: str, level: int | None = None) -> logging.Logger:
     """Return a named logger. configure_root_logger() need not be called first."""
     configure_root_logger()
     logger = logging.getLogger(name)

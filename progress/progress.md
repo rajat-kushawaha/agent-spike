@@ -758,3 +758,30 @@ This happened on a backend-only PR for a ticket that also had a separate fronten
 **Files changed:**
 - `.env` — `JIRA_STATUS_READY_FOR_MERGE=In PR review`
 - `agents/tech_lead_agent.py` — `_approve_repo()` fallback to comment on 422
+
+---
+
+## Full Repo Refactor — Readability and Maintainability Pass
+
+After the codebase grew through several incident-driven fixes, a full review pass was done.
+
+**Changes made:**
+
+### `ai_client.py`
+- `_SafeDict` was defined inside `load_prompt()` (re-created on every call). Moved to module level so it's defined once and importable.
+
+### `agents/dev_agent.py`
+- `import re` was written inline inside `_fmt_commit()` and inside `_fix()` as `import re as _re`. Moved to the module-level import block.
+- `_fetch_existing_files()` was dead code — superseded months ago by `_fetch_repo_context()` which fetches much richer context. Removed entirely.
+- All references to `gh._repo_name` (private attribute access from outside the class) replaced with `gh.repo.full_name` (public API) or the new `gh.repo_name` property.
+
+### `github_client.py`
+- Added `repo_name` as a public property so callers don't access `_repo_name` directly.
+
+### `logger.py`
+- `Optional[int]` (old-style `typing.Optional`) replaced with `int | None` to match the `from __future__ import annotations` style used everywhere else.
+
+### `state_manager.py`
+- `STATUSES` was a flat set mixing current and legacy status names. Split into `_CURRENT_STATUSES` and `_LEGACY_STATUSES` with `STATUSES = _CURRENT_STATUSES | _LEGACY_STATUSES`. Makes it obvious which statuses are active and which are kept only for backwards-compatibility with existing state.json files.
+
+**No behavioural changes** — pure cleanup pass.

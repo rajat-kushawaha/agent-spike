@@ -31,7 +31,7 @@ log = get_logger(__name__)
 
 LOCK_TTL_SECONDS = 600  # locks older than this are assumed stale
 
-STATUSES = {
+_CURRENT_STATUSES = {
     "NEW",
     "BA_ANALYZING",
     "BA_AWAITING_CLARIFICATION",
@@ -42,10 +42,15 @@ STATUSES = {
     "CHANGES_REQUESTED",
     "APPROVED",
     "FAILED",
-    # Legacy values
+}
+
+# Kept only for backwards-compatibility with existing state.json files
+_LEGACY_STATUSES = {
     "BA_PENDING", "BA_DONE", "DEV_PENDING", "DEV_DONE",
     "REVIEW_PENDING", "REVIEW_DONE", "FIX_PENDING", "MERGED",
 }
+
+STATUSES = _CURRENT_STATUSES | _LEGACY_STATUSES
 
 
 class StateManager:

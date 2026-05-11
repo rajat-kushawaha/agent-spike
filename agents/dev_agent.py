@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from typing import Any
 
 from ai_client import AIClient
@@ -45,9 +46,7 @@ _MAX_CHUNKS = 8
 
 def _fmt_commit(ticket_id: str, message: str) -> str:
     """Enforce commit message format: 'TICKET-ID | message'."""
-    # Strip any existing ticket prefix the AI may have added to avoid duplication
-    import re as _re
-    clean = _re.sub(r"^[\w-]+\s*\|?\s*", "", message).strip() if "|" in message else message.strip()
+    clean = re.sub(r"^[\w-]+\s*\|?\s*", "", message).strip() if "|" in message else message.strip()
     return f"{ticket_id} | {clean}"
 
 
@@ -191,7 +190,7 @@ class DevAgent:
         # Create branches (no-op if already exist)
         for key, gh in github_clients.items():
             gh.create_branch(branch_name)
-            log.info("Created branch %s in repo %s", branch_name, gh._repo_name)
+            log.info("Created branch %s in repo %s", branch_name, gh.repo.full_name)
 
         # Step 2: implement each chunk and commit, skipping already-completed ones
         for i, chunk in enumerate(chunks[:_MAX_CHUNKS], 1):
@@ -249,7 +248,7 @@ class DevAgent:
                 "completed_chunks": i,
                 "submitted_files": all_committed_files,
             })
-            log.info("Committed chunk %d for %s to %s: %s", i, ticket_id, gh._repo_name, list(files.keys()))
+            log.info("Committed chunk %d for %s to %s: %s", i, ticket_id, gh.repo.full_name, list(files.keys()))
 
         # Step 3: self-check — are ALL acceptance criteria covered?
         log.info("Dev agent running self-check for %s", ticket_id)
@@ -307,10 +306,10 @@ class DevAgent:
             try:
                 pr_num = gh.create_pull_request(branch_name, pr_title, pr_body)
                 pr_numbers[key] = pr_num
-                log.info("Dev agent raised PR #%d in %s for %s", pr_num, gh._repo_name, ticket_id)
+                log.info("Dev agent raised PR #%d in %s for %s", pr_num, gh.repo_name, ticket_id)
             except Exception as exc:
                 # 422 = no commits on branch (repo had no changes for this ticket)
-                log.warning("Skipping PR for repo %s (%s): %s", key, gh._repo_name, exc)
+                log.warning("Skipping PR for repo %s (%s): %s", key, gh.repo_name, exc)
 
         # Primary PR number stored for Tech Lead to review
         primary_pr = pr_numbers.get(target_repo_keys[0], 0)
@@ -373,8 +372,7 @@ class DevAgent:
         seen_issues: set[str] = set()
         deduped_feedback: list[str] = []
         for item in review_feedback:
-            import re as _re
-            bare = _re.sub(r"^\[Round \d+\]\s*", "", item).strip().lower()
+            bare = re.sub(r"^\[Round \d+\]\s*", "", item).strip().lower()
             if bare not in seen_issues:
                 seen_issues.add(bare)
                 deduped_feedback.append(item)
@@ -441,7 +439,7 @@ class DevAgent:
             gh = github_clients.get(repo_key, primary_gh)
             gh.create_branch(branch_name)  # no-op if exists
             gh.commit_files(branch_name, repo_files, commit_msg)
-            log.info("Fix committed for %s to %s: %s", ticket_id, gh._repo_name, list(repo_files.keys()))
+            log.info("Fix committed for %s to %s: %s", ticket_id, gh.repo.full_name, list(repo_files.keys()))
 
         self._state.upsert_task(
             ticket_id,
@@ -566,20 +564,3 @@ class DevAgent:
                 log.debug("Could not fetch %s from %s: %s", path, branch_name, exc)
         return "\n\n".join(parts) if parts else ""
 
-    def _fetch_existing_files(self, files_to_change: list[dict]) -> str:
-        """Fetch files from the base branch (main) for initial context."""
-        parts: list[str] = []
-        for entry in files_to_change:
-            path = entry.get("path", "")
-            if not path:
-                continue
-            try:
-                contents = self._github.repo.get_contents(
-                    path, ref=self._config.github_base_branch
-                )
-                text = base64.b64decode(contents.content).decode("utf-8", errors="replace")  # type: ignore[union-attr]
-                parts.append(f"### {path}\n```\n{text}\n```")
-            except Exception as exc:
-                log.debug("Could not fetch %s from main: %s", path, exc)
-                parts.append(f"### {path}\n(new file — does not exist yet)")
-        return "\n\n".join(parts) if parts else "(no existing file context available)"

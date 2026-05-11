@@ -58,6 +58,10 @@ class GitHubClient:
         return self.for_repo(entry["repo"])
 
     @property
+    def repo_name(self) -> str:
+        return self._repo_name
+
+    @property
     def repo(self) -> Repository:
         if self._repo is None:
             self._repo = self._gh.get_repo(self._repo_name)

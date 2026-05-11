@@ -26,10 +26,15 @@ log = get_logger(__name__)
 _PROMPT_DIR = Path(__file__).parent / "prompts"
 _MAX_RETRIES = 3
 _RETRY_DELAY = 5  # seconds
-# High token limit so large file outputs don't get truncated mid-JSON
 _MAX_TOKENS = 32000
-# Max continuation attempts when the response is cut off
 _MAX_CONTINUATIONS = 5
+
+
+class _SafeDict(dict):
+    """dict subclass that returns empty string for missing keys in str.format_map."""
+    def __missing__(self, key: str) -> str:
+        log.warning("Prompt placeholder {%s} has no value — using empty string", key)
+        return ""
 
 
 class AIClient:
@@ -50,11 +55,6 @@ class AIClient:
             return template.format_map(kwargs)
         except KeyError as exc:
             log.warning("Prompt template key error — missing kwarg %s, substituting empty string", exc)
-            # Partial substitution: replace known keys, leave unknown {placeholders} intact
-            class _SafeDict(dict):
-                def __missing__(self, key: str) -> str:
-                    log.warning("Prompt placeholder {%s} has no value — using empty string", key)
-                    return ""
             return template.format_map(_SafeDict(kwargs))
 
     def complete(
