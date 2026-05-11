@@ -18,10 +18,11 @@ INSTRUCTIONS:
    - Cover one or more related acceptance criteria
    - Leave the codebase in a working state after it is committed
    - Target exactly ONE repo (never mix files from different repos in one chunk)
-3. Order chunks so dependencies come first (e.g. data models before API routes).
-4. Do NOT start implementing yet — only plan.
-5. Branch name must be exactly the ticket ID (e.g. "CR-1", "KAN-8") — nothing else.
-6. Each chunk must include a `repo_key` matching one of the keys in `target_repos` from the BA analysis (e.g. "api", "ui"). Use the `repo` field on each file in `files_to_change` to determine which repo each file belongs to.
+4. Order chunks so dependencies come first (e.g. data models before API routes).
+5. Do NOT start implementing yet — only plan.
+6. Branch name must be exactly the ticket ID (e.g. "CR-1", "KAN-8") — nothing else.
+7. Each chunk must include a `repo_key` matching one of the keys in `target_repos` from the BA analysis (e.g. "api", "ui").
+8. Determine which files to change by reading the EXISTING CODEBASE CONTEXT above — use the `repo_changes` field in the BA analysis to understand what areas to change, then identify the correct real files from the codebase context. Never use file paths from the BA analysis if it has a `files_to_change` field — those may be wrong. Trust the actual codebase.
 
 OUTPUT FORMAT:
 Respond with a single JSON object only.

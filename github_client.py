@@ -376,30 +376,41 @@ class GitHubClient:
             log.error("Failed to post review comment on PR #%d: %s", pr_number, exc)
             return False
 
-    def get_repo_structure(self, max_depth: int = 2) -> str:
+    def get_repo_file_list(self) -> str:
         """
-        Return a compact directory/file tree of the repo's main branch up to max_depth levels.
-        Used by the BA agent to generate accurate file paths.
+        Return the complete flat list of every source file in the repo.
+        Used by the BA agent so it can reference real paths — not guesses.
+        Filters out binary/generated files and limits total lines for prompt size.
         """
+        _SKIP_EXTENSIONS = {
+            ".jar", ".class", ".png", ".jpg", ".jpeg", ".gif", ".svg",
+            ".ico", ".woff", ".woff2", ".ttf", ".eot", ".map",
+        }
+        _SKIP_DIRS = {"node_modules", ".gradle", "build", "dist", ".git", "gradle"}
+
         lines: list[str] = [f"Repository: {self._repo_name}"]
         try:
-            # Detect language from repo metadata
-            repo = self.repo
-            language = repo.language or "unknown"
+            language = self.repo.language or "unknown"
             lines.append(f"Primary language: {language}")
+            lines.append("All source files:")
 
-            # Walk tree up to max_depth
-            tree = repo.get_git_tree(self._base_branch, recursive=True)
+            tree = self.repo.get_git_tree(self._base_branch, recursive=True)
             for item in tree.tree:
-                parts = item.path.split("/")
-                if len(parts) > max_depth:
+                if item.type != "blob":
                     continue
-                indent = "  " * (len(parts) - 1)
-                icon = "/" if item.type == "tree" else ""
-                lines.append(f"{indent}{parts[-1]}{icon}")
+                path = item.path
+                parts = path.split("/")
+                # Skip generated/binary directories
+                if any(p in _SKIP_DIRS for p in parts):
+                    continue
+                # Skip binary file types
+                ext = "." + path.rsplit(".", 1)[-1] if "." in path else ""
+                if ext.lower() in _SKIP_EXTENSIONS:
+                    continue
+                lines.append(f"  {path}")
         except GithubException as exc:
-            log.warning("Could not fetch repo structure for %s: %s", self._repo_name, exc)
-            lines.append("(could not fetch structure)")
+            log.warning("Could not fetch file list for %s: %s", self._repo_name, exc)
+            lines.append("(could not fetch — file list unavailable)")
         return "\n".join(lines)
 
     def test_connection(self) -> bool:

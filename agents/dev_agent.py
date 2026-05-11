@@ -136,6 +136,7 @@ class DevAgent:
         all_committed_files: dict[str, str] = dict(task.get("submitted_files", {}))
 
         # Always fetch repo context — used in planning and every chunk implementation
+        # Pass files_to_change if present (legacy BA format); empty list triggers broad directory scan
         repo_context: dict[str, str] = self._fetch_repo_context(
             ba_analysis.get("files_to_change", []), github_clients
         )
@@ -473,14 +474,14 @@ class DevAgent:
 
     def _fetch_repo_context(self, files_to_change: list[dict], github_clients: dict) -> dict[str, str]:
         """
-        For each repo, fetch:
-        1. Current content of every planned file (from main — so AI sees what it's modifying)
-        2. Related files in the same directories (so AI sees naming/style conventions)
-        3. Key shared files: types, api client, hooks, app entry points
+        For each repo fetch enough of the real codebase for the dev AI to write correct code:
+          1. Key shared files (types, api client, hooks, entry points) — always fetched
+          2. If BA provided files_to_change: fetch those files + their directory siblings
+          3. If no files_to_change (new BA format): fetch all files in the key source directories
+             so the AI can see what already exists and pick the right files itself
 
         Returns {repo_key: formatted_context_string}
         """
-        # Key shared files to always fetch per repo — these define the patterns the AI must follow
         _SHARED_PATTERNS: dict[str, list[str]] = {
             "ui": [
                 "src/types/api.ts",
@@ -500,7 +501,19 @@ class DevAgent:
             ],
         }
 
-        # Group planned files by repo
+        # Key directories to read in full when no specific files are planned
+        _BROAD_DIRS: dict[str, list[str]] = {
+            "ui": ["src/components", "src/routes", "src/styles", "src/api/services", "tests"],
+            "api": [
+                "src/main/java/com/revelio/api/service",
+                "src/main/java/com/revelio/api/controller",
+                "src/main/java/com/revelio/api/model",
+                "src/test/java/com/revelio/api/service",
+                "src/test/java/com/revelio/api/controller",
+            ],
+        }
+
+        # Group BA-specified files by repo (legacy format — may be empty)
         files_by_repo: dict[str, list[str]] = {}
         for entry in files_to_change:
             repo_key = entry.get("repo", "")
@@ -524,31 +537,37 @@ class DevAgent:
                     header = f"### {path}" + (f" ({label})" if label else "")
                     parts.append(f"{header}\n```\n{text}\n```")
                 except Exception:
-                    if label == "planned":
-                        parts.append(f"### {path}\n(new file — does not exist yet on main)")
+                    pass
 
-            # 1. Shared pattern files for this repo
+            def _fetch_dir(dir_path: str, label: str = "") -> None:
+                try:
+                    items = gh.repo.get_contents(dir_path, ref=base)
+                    for item in (items if isinstance(items, list) else [items]):
+                        if item.type == "file":
+                            _fetch_file(item.path, label)
+                except Exception:
+                    pass
+
+            # 1. Always fetch shared pattern files
             for shared_path in _SHARED_PATTERNS.get(repo_key, []):
                 _fetch_file(shared_path, "existing pattern — follow this style")
 
-            # 2. Planned files (what already exists that the agent will modify)
-            for path in files_by_repo.get(repo_key, []):
-                _fetch_file(path, "planned")
-
-            # 3. Sibling files in the same directories as planned files (for naming/style context)
-            dirs_seen: set[str] = set()
-            for path in files_by_repo.get(repo_key, []):
-                dir_path = "/".join(path.split("/")[:-1])
-                if not dir_path or dir_path in dirs_seen:
-                    continue
-                dirs_seen.add(dir_path)
-                try:
-                    siblings = gh.repo.get_contents(dir_path, ref=base)
-                    for sibling in (siblings if isinstance(siblings, list) else [siblings]):
-                        if sibling.type == "file" and sibling.path not in fetched:
-                            _fetch_file(sibling.path, "sibling — follow this style")
-                except Exception:
-                    pass
+            planned_paths = files_by_repo.get(repo_key, [])
+            if planned_paths:
+                # 2a. BA gave specific files — fetch them + their directory siblings
+                for path in planned_paths:
+                    _fetch_file(path, "targeted file")
+                dirs_seen: set[str] = set()
+                for path in planned_paths:
+                    dir_path = "/".join(path.split("/")[:-1])
+                    if not dir_path or dir_path in dirs_seen:
+                        continue
+                    dirs_seen.add(dir_path)
+                    _fetch_dir(dir_path, "sibling — follow this style")
+            else:
+                # 2b. No specific files — read entire key directories so AI can find the right files
+                for dir_path in _BROAD_DIRS.get(repo_key, []):
+                    _fetch_dir(dir_path, "existing file — study before deciding what to change")
 
             result[repo_key] = "\n\n".join(parts) if parts else "(no existing context — this is a new codebase)"
             log.info(

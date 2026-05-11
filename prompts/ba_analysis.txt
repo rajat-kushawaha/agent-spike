@@ -14,26 +14,26 @@ Existing Comments:
 AVAILABLE REPOSITORIES (key: repo — keywords that indicate changes belong here):
 {available_repos}
 
-ACTUAL REPOSITORY STRUCTURES (use these to generate correct file paths — do not guess):
+ACTUAL FILES IN EACH REPOSITORY (every path here is real — use these to understand what already exists):
 {repo_structures}
 
 INSTRUCTIONS:
 1. Identify the core functional requirement from all available fields — summary, description, comments, and labels.
 2. Break the requirement into discrete, testable acceptance criteria (Given/When/Then format). Each criterion must be independently verifiable.
-3. Determine which repos need changes by matching the ticket content against the repo keywords above. A full-stack ticket will target multiple repos (e.g. ["api", "ui"]).
-4. List every file that needs to change. For each file, set "repo" to the repo key it belongs to. Use the ACTUAL REPOSITORY STRUCTURES above to derive real paths — match the language, directory layout, and naming conventions already present in the repo. Never guess a language or path structure.
-5. Set "target_repos" to the list of repo keys that need changes (derived from step 3).
-6. Specify exact function signatures with type hints.
+3. Determine which repos need changes by matching the ticket content against the repo keywords. Set "target_repos" to those repo keys. A full-stack ticket will target multiple repos (e.g. ["api", "ui"]).
+4. For each target repo, describe what needs to change in plain English under "repo_changes". Do NOT list specific file paths — the developer will read the codebase and decide which files to touch. Describe the functional area and what needs to happen (e.g. "Add a new blog entry to the data/seed layer", "Update the page background colour in the blogs page styling").
+5. Use the file list to inform your understanding of the codebase (e.g. "the API uses Java Spring Boot", "the UI has a BlogCard component") so your acceptance criteria and notes are accurate. But do not copy file paths into the output.
+6. Specify any key implementation constraints the developer must know (e.g. "blog data comes from the API, not hardcoded in the UI").
 7. Identify edge cases the developer must handle explicitly.
 8. Estimate complexity: "low" (< 2h), "medium" (2–8h), "high" (> 8h).
 9. CLARIFICATION RULES — only ask if you genuinely cannot proceed without the answer:
-   - NEVER ask about things visible in the repo structure (component names, file locations, existing patterns).
-   - NEVER ask about conventions already established in the codebase (naming, styling, data patterns) — infer them.
-   - NEVER ask about position/ordering of new items — default to appending at the end unless the ticket says otherwise.
+   - NEVER ask about things visible from the file list (what components exist, what patterns are used).
+   - NEVER ask about conventions already established in the codebase — infer them.
+   - NEVER ask about position/ordering of new items — default to appending at the end.
    - NEVER ask whether to reuse existing components — always reuse what already exists.
    - NEVER ask about fields not mentioned in the ticket — use only what the ticket specifies.
-   - ONLY ask when a specific value is required that is not in the ticket and cannot be inferred (e.g. an exact hex colour, a specific external URL, a third-party API key).
-   - If the ticket says "update X" without a value AND there is no sensible default, ask ONE focused question for that value.
+   - ONLY ask when a specific value is required that is not in the ticket and cannot be inferred (e.g. an exact hex colour, a specific external URL).
+   - If the ticket says "update X" without a value AND there is no sensible default, ask ONE focused question.
    - Aim for zero clarification questions. One is acceptable. More than two is a failure.
 
 OUTPUT FORMAT:
@@ -49,41 +49,42 @@ Respond with a single JSON object only. No text outside the JSON.
     "Given X, when Y, then Z",
     "Given A, when B, then C"
   ],
-  "target_repos": ["api"],
-  "files_to_change": [
-    {{"path": "calculator.py", "repo": "api", "reason": "Add divide() function"}},
-    {{"path": "tests/test_calculator.py", "repo": "api", "reason": "Add tests for divide()"}}
-  ],
-  "function_signatures": [
-    "def divide(a: float, b: float) -> float"
-  ],
+  "target_repos": ["api", "ui"],
+  "repo_changes": {{
+    "api": "Describe what needs to change in the api repo in plain English",
+    "ui": "Describe what needs to change in the ui repo in plain English"
+  }},
   "edge_cases": [
-    "Division by zero must raise ValueError with message 'Cannot divide by zero'"
+    "Edge case the developer must handle"
   ],
   "complexity": "low",
-  "implementation_notes": "Any additional context for the developer"
+  "implementation_notes": "Key constraints and context the developer needs — e.g. where data comes from, what must not be broken"
 }}
 ```
 
-EXAMPLE (ticket asking to add a divide function):
+EXAMPLE (ticket: add a blog post and change the page background colour):
 ```json
 {{
-  "ticket_id": "DEV-42",
+  "ticket_id": "CR-14",
   "needs_clarification": false,
   "clarification_questions": [],
-  "summary": "Add a divide() function to calculator.py that handles division by zero",
+  "summary": "Add a new blog post via the API seed data and update the blogs page background colour in the UI",
   "acceptance_criteria": [
-    "Given two numbers a and b where b != 0, divide(a, b) returns a / b as a float",
-    "Given b == 0, divide(a, b) raises ValueError with message 'Cannot divide by zero'",
-    "Tests exist in tests/test_calculator.py covering both cases"
+    "Given the API is running, GET /api/blogs returns a post with title 'Development in the era of AI'",
+    "Given the blogs page loads, the new post appears alongside existing posts",
+    "Given the blogs page loads, the background colour is visibly updated to a light grey",
+    "Existing posts, pagination, and page functionality are not broken"
   ],
-  "files_to_change": [
-    {{"path": "calculator.py", "reason": "Add divide() function"}},
-    {{"path": "tests/test_calculator.py", "reason": "Add unit tests for divide()"}}
+  "target_repos": ["api", "ui"],
+  "repo_changes": {{
+    "api": "Add a new blog entry to the seed data layer with title 'Development in the era of AI', summary 'How AI tools are reshaping the way developers write, review, and ship code.', and tags ['ai', 'development', 'productivity']",
+    "ui": "Update the background colour of the blogs page. The ticket does not specify an exact colour — use a clean light grey (#f5f5f5) as a sensible default."
+  }},
+  "edge_cases": [
+    "Background colour change must not affect other pages",
+    "New blog entry must not break existing pagination"
   ],
-  "function_signatures": ["def divide(a: float, b: float) -> float"],
-  "edge_cases": ["Division by zero must raise ValueError", "Both integers and floats must work"],
   "complexity": "low",
-  "implementation_notes": "Follow the existing style in calculator.py (module-level functions, no classes)"
+  "implementation_notes": "Blog data is served from the Java API (BlogService seed data), not hardcoded in the UI. The UI fetches from GET /api/blogs. Only the api repo needs a new post; the UI only needs a styling change."
 }}
 ```

@@ -337,17 +337,17 @@ class BAAgent:
     # ------------------------------------------------------------------
 
     def _fetch_repo_structures(self) -> str:
-        """Fetch the directory tree for each configured repo to give the AI real path context."""
+        """Fetch the complete file list for each repo so the AI uses real paths, never guesses."""
         if not self._github:
-            return "(repo structures unavailable — no GitHub client)"
+            return "(repo file lists unavailable — no GitHub client)"
         parts: list[str] = []
         for key, entry in self._config.github_repos.items():
             try:
                 gh = self._github.for_repo(entry["repo"])
-                structure = gh.get_repo_structure(max_depth=2)
-                parts.append(f"[{key}]\n{structure}")
+                file_list = gh.get_repo_file_list()
+                parts.append(f"[{key}]\n{file_list}")
             except Exception as exc:
-                log.warning("Could not fetch structure for %s: %s", key, exc)
+                log.warning("Could not fetch file list for %s: %s", key, exc)
                 parts.append(f"[{key}]\n(could not fetch — {exc})")
         return "\n\n".join(parts)
 
